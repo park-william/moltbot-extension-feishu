@@ -1,6 +1,6 @@
-# @clawdbot/extension-feishu
+# @moltbot/extension-feishu
 
-这是 Moltbot (Clawdbot) 的原生飞书 (Feishu/Lark) 频道扩展插件。它允许你的 AI 助手直接接入飞书，通过单聊或群聊与用户进行交互。
+这是 Moltbot (Moltbot) 的原生飞书 (Feishu/Lark) 频道扩展插件。它允许你的 AI 助手直接接入飞书，通过单聊或群聊与用户进行交互。
 
 ## 特性
 
@@ -15,9 +15,9 @@
 
 ```bash
 # 进入你的插件目录
-cd ~/.clawdbot/extensions
+cd ~/.moltbot/extensions
 # 克隆或解压本项目
-git clone https://github.com/park-william/clawdbot-extension-feishu feishu
+git clone https://github.com/park-william/moltbot-extension-feishu feishu
 # 安装依赖
 cd feishu
 npm install

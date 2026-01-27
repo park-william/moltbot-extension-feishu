@@ -1,7 +1,7 @@
 {
-  "name": "@clawdbot/extension-feishu",
+  "name": "@moltbot/extension-feishu",
   "version": "1.0.0",
-  "description": "Native Feishu (Lark) channel extension for Clawdbot",
+  "description": "Native Feishu (Lark) channel extension for Moltbot",
   "main": "index.js",
   "type": "module",
   "dependencies": {
