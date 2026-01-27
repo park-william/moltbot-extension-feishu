@@ -1,0 +1,11 @@
+{
+  "name": "@clawdbot/extension-feishu",
+  "version": "1.0.0",
+  "description": "Native Feishu (Lark) channel extension for Clawdbot",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.56.1",
+    "uuid": "^9.0.1"
+  }
+}
