@@ -1,4 +1,8 @@
 import * as lark from '@larksuiteoapi/node-sdk';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { pipeline } from 'node:stream/promises';
 import { getCoreRuntime } from '../index.js';
 
 export class FeishuProvider {
@@ -34,6 +38,52 @@ export class FeishuProvider {
         this.wsClient = null;
     }
 
+    async downloadImage(messageId, imageKey) {
+        try {
+            const resp = await this.client.im.messageResource.get({
+                path: { message_id: messageId, file_key: imageKey },
+                params: { type: 'image' },
+            });
+
+            if (!resp) throw new Error("Empty response from Feishu");
+
+            const tmpDir = os.tmpdir();
+            const filename = `feishu-${messageId}-${imageKey}.image`;
+            const filePath = path.join(tmpDir, filename);
+
+            // Lark SDK v1.x response wrapper handling
+            if (typeof resp.writeFile === 'function') {
+                await resp.writeFile(filePath);
+            } else if (typeof resp.getReadableStream === 'function') {
+                 // Explicit stream getter
+                 const stream = resp.getReadableStream();
+                 if (stream) {
+                    await pipeline(stream, fs.createWriteStream(filePath));
+                 } else {
+                     throw new Error("Feishu response stream was null");
+                 }
+            } else if (Buffer.isBuffer(resp)) {
+                await fs.promises.writeFile(filePath, resp);
+            } else if (typeof resp.pipe === 'function') {
+                await pipeline(resp, fs.createWriteStream(filePath));
+            } else if (resp.data && (Buffer.isBuffer(resp.data) || typeof resp.data.pipe === 'function')) {
+                 if (Buffer.isBuffer(resp.data)) {
+                     await fs.promises.writeFile(filePath, resp.data);
+                 } else {
+                     await pipeline(resp.data, fs.createWriteStream(filePath));
+                 }
+            } else {
+                this.logger?.warn(`Unknown response type for image download: ${resp.constructor?.name}, keys: ${Object.keys(resp)}`);
+                throw new Error("Received invalid response type for image");
+            }
+
+            return { path: filePath, type: 'image/jpeg' }; 
+        } catch (err) {
+            this.logger?.error(`Failed to download image ${imageKey}: ${err.message}`);
+            return null;
+        }
+    }
+
     async start() {
         const core = getCoreRuntime();
         const mode = this.account.config.mode || 'websocket';
@@ -58,6 +108,8 @@ export class FeishuProvider {
                     try {
                         const { message, sender } = data;
                         let contentText = "";
+                        let mediaPath = undefined;
+                        let mediaType = undefined;
 
                         if (message.message_type === 'text') {
                             contentText = JSON.parse(message.content).text;
@@ -80,9 +132,24 @@ export class FeishuProvider {
                             } catch (e) {
                                 this.logger?.warn("Failed to parse post content: " + e.message);
                             }
+                        } else if (message.message_type === 'image') {
+                            try {
+                                const content = JSON.parse(message.content);
+                                const imageKey = content.image_key;
+                                if (imageKey) {
+                                    const downloaded = await this.downloadImage(message.message_id, imageKey);
+                                    if (downloaded) {
+                                        mediaPath = downloaded.path;
+                                        mediaType = downloaded.type;
+                                        contentText = "<media:image>";
+                                    }
+                                }
+                            } catch (e) {
+                                this.logger?.warn("Failed to process image message: " + e.message);
+                            }
                         }
 
-                        if (!contentText) {
+                        if (!contentText && !mediaPath) {
                             // Silently ignore other types or empty parses
                             this.logger?.debug?.(`Ignored message type: ${message.message_type}`);
                             return;
@@ -106,6 +173,8 @@ export class FeishuProvider {
                             AccountId: this.ctx.accountId || 'default',
                             MessageSid: message.message_id,
                             OriginatingChannel: 'feishu',
+                            MediaPath: mediaPath,
+                            MediaType: mediaType,
                         };
                         
                         // Dispatch via standard reply interface

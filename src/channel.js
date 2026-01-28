@@ -6,7 +6,7 @@ export const feishuPlugin = {
     // Capabilities defined for this channel
     capabilities: {
         chatTypes: ["direct", "group"],
-        media: false, // Text only for MVP
+        media: true, // Enabled media support
     },
 
     // Configuration methods
