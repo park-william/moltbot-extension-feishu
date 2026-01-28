@@ -29,30 +29,24 @@
 
 ## 配置
 
-在 `moltbot.json` 配置文件中添加飞书频道的配置信息：
+在 `moltbot.json` 配置文件中添加飞书插件的配置信息：
 
 ```json
 {
   "channels": {
     "feishu": {
-      "accounts": {
-        "default": {
-          "config": {
-            "appId": "cli_xxxxxxxxxxxx",
-            "appSecret": "xxxxxxxxxxxxxxxxxxxxxxxx",
-            "mode": "websocket" 
-          }
-        }
-      }
+      "dmPolicy": "allowlist"
     }
   },
   "plugins": {
-    "load": {
-      "paths": ["extensions"]
-    },
     "entries": {
       "feishu": {
-        "enabled": true
+        "enabled": true,
+        "config": {
+          "appId": "cli_xxxxxxxxxxxx",
+          "appSecret": "xxxxxxxxxxxxxxxxxxxxxxxx",
+          "mode": "websocket"
+        }
       }
     }
   }
@@ -61,11 +55,19 @@
 
 ### 配置项说明
 
+#### `plugins.entries.feishu.config`
+
 | 参数 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `appId` | string | 是 | 飞书开放平台应用的 App ID |
 | `appSecret` | string | 是 | 飞书开放平台应用的 App Secret |
 | `mode` | string | 否 | 连接模式：`websocket` (默认) 或 `webhook` |
+
+#### `channels.feishu`
+
+| 参数 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `dmPolicy` | string | 否 | 私聊策略：`allowlist`、`open` 或 `disabled` |
 
 ## 飞书开放平台设置
 
