@@ -11,8 +11,28 @@ export const feishuPlugin = {
 
     // Configuration methods
     config: {
-        listAccountIds: (cfg) => Object.keys(cfg.channels?.feishu?.accounts || {}),
-        resolveAccount: (cfg, accountId) => cfg.channels?.feishu?.accounts?.[accountId],
+        listAccountIds: (cfg) => {
+            const explicit = Object.keys(cfg.channels?.feishu?.accounts || {});
+            if (explicit.length > 0) return explicit;
+            
+            // Fallback: use plugin-level config as 'default' account
+            if (cfg.plugins?.entries?.feishu?.config?.appId) {
+                return ['default'];
+            }
+            return [];
+        },
+        resolveAccount: (cfg, accountId) => {
+            const explicit = cfg.channels?.feishu?.accounts?.[accountId];
+            if (explicit) return explicit;
+
+            if (accountId === 'default' && cfg.plugins?.entries?.feishu?.config?.appId) {
+                return {
+                    id: 'default',
+                    config: cfg.plugins.entries.feishu.config
+                };
+            }
+            return null;
+        },
     },
 
     // Inbound listener (Gateway logic)
