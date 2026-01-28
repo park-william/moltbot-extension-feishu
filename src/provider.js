@@ -117,6 +117,14 @@ export class FeishuProvider {
 
                         if (message.message_type === 'text') {
                             contentText = JSON.parse(message.content).text;
+                            // Replace @mentions placeholders with names if available
+                            if (message.mentions && message.mentions.length > 0) {
+                                message.mentions.forEach(mention => {
+                                    if (mention.key && mention.name) {
+                                        contentText = contentText.replaceAll(mention.key, `@${mention.name}`);
+                                    }
+                                });
+                            }
                         } else if (message.message_type === 'post') {
                             // Handle rich text (post) messages
                             // Extract plain text from the complex post structure
