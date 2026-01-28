@@ -1,32 +1,36 @@
 import * as lark from '@larksuiteoapi/node-sdk';
+import { getCoreRuntime } from '../index.js';
 
 export class FeishuProvider {
-    constructor(account, runtime, logger) {
-        this.config = account.config;
-        this.runtime = runtime;
-        this.logger = logger;
-        this.appId = account.config.appId;
+    constructor(ctx) {
+        this.ctx = ctx;
+        this.account = ctx.account;
+        this.runtime = ctx.runtime;
+        this.logger = ctx.log;
+        this.appId = ctx.account.config.appId;
         
         this.client = new lark.Client({
-            appId: this.config.appId,
-            appSecret: this.config.appSecret,
+            appId: this.account.config.appId,
+            appSecret: this.account.config.appSecret,
         });
         
         this.wsClient = null;
     }
 
-    async start(abortSignal) {
-        this.logger?.info(`Starting Feishu provider for ${this.appId} in ${this.config.mode} mode`);
+    async start() {
+        const core = getCoreRuntime();
+        const mode = this.account.config.mode || 'websocket';
+        this.logger?.info("Starting Feishu provider for " + this.appId + " in " + mode + " mode");
         
-        if (this.config.mode === 'webhook') {
+        if (mode === 'webhook') {
             this.logger?.info("Webhook mode enabled. Ensure public URL is configured in Feishu console.");
             return;
         }
 
         // WebSocket Mode
         this.wsClient = new lark.WSClient({
-            appId: this.config.appId,
-            appSecret: this.config.appSecret,
+            appId: this.account.config.appId,
+            appSecret: this.account.config.appSecret,
         });
 
         const dispatcher = new lark.EventDispatcher({}).register({
@@ -38,15 +42,29 @@ export class FeishuProvider {
                 const senderId = sender.sender_id.user_id || sender.sender_id.open_id;
                 const chatId = message.chat_id;
 
-                await this.runtime.ingest({
-                    channel: 'feishu',
-                    id: message.message_id,
-                    from: { id: senderId },
-                    to: { id: this.appId },
-                    conversation: { id: chatId, type: message.chat_type },
-                    content: { text: content },
-                    raw: data
-                });
+                const ctxPayload = {
+                    Body: content,
+                    From: senderId,
+                    To: this.appId,
+                    SessionKey: 'feishu:' + chatId,
+                    AccountId: this.ctx.accountId || 'default',
+                    MessageSid: message.message_id,
+                    OriginatingChannel: 'feishu',
+                };
+
+                try {
+                    await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+                        ctx: ctxPayload,
+                        cfg: this.ctx.cfg,
+                        dispatcherOptions: {
+                            deliver: async (payload) => {
+                                await this.sendText(chatId, payload.text);
+                            }
+                        }
+                    });
+                } catch (err) {
+                    this.logger?.error("Feishu message dispatch failed: " + String(err));
+                }
             }
         });
 
@@ -54,9 +72,8 @@ export class FeishuProvider {
         this.logger?.info("Feishu WebSocket connected successfully");
 
         // Handle shutdown
-        abortSignal?.addEventListener('abort', () => {
+        this.ctx.abortSignal?.addEventListener('abort', () => {
             this.logger?.info("Shutting down Feishu WebSocket...");
-            // SDK currently doesn't have a clean stop for WSClient, but we can drop the ref
             this.wsClient = null;
         });
     }

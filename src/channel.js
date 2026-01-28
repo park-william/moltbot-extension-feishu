@@ -18,11 +18,11 @@ export const feishuPlugin = {
     // Inbound listener (Gateway logic)
     gateway: {
         startAccount: async (ctx) => {
-            const provider = new FeishuProvider(ctx.account, ctx.runtime, ctx.log);
-            await provider.start(ctx.abortSignal);
+            const provider = new FeishuProvider(ctx);
+            await provider.start();
             
             return async () => {
-                // Stop logic is handled via abortSignal in provider.start
+                // Stop logic is handled via abortSignal in ctx
             };
         }
     },
@@ -34,7 +34,7 @@ export const feishuPlugin = {
             const account = cfg.channels?.feishu?.accounts?.[accountId || 'default'];
             if (!account) throw new Error("Feishu account not found in config");
             
-            const provider = new FeishuProvider(account, null, null);
+            const provider = new FeishuProvider({ account, log: console });
             await provider.sendText(to, text);
             
             return { channel: "feishu", id: Date.now().toString() };

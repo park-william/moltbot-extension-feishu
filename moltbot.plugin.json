@@ -13,8 +13,7 @@
       },
       "appSecret": {
         "type": "string",
-        "title": "App Secret",
-        "format": "password"
+        "title": "App Secret"
       },
       "encryptKey": {
         "type": "string",
