@@ -14,7 +14,11 @@ export const feishuPlugin = {
             // Feishu IDs typically start with oc_ (chat), ou_ (user), or on_ (union)
             if (/^(oc_|ou_|on_)/.test(target)) return target;
             return null;
-        }
+        },
+        targetResolver: {
+            looksLikeId: (id) => /^(oc_|ou_|on_)/.test(id),
+            hint: "<chat_id|open_id|union_id>",
+        },
     },
 
     // Configuration methods
