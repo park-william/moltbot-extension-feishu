@@ -61,7 +61,7 @@
 | :--- | :--- | :--- | :--- |
 | `appId` | string | 是 | 飞书开放平台应用的 App ID |
 | `appSecret` | string | 是 | 飞书开放平台应用的 App Secret |
-| `mode` | string | 否 | 连接模式：`websocket` (默认) 或 `webhook` |
+| `mode` | string | 否 | 连接模式：目前仅支持 `websocket`（默认）。Webhook 模式暂未实现。 |
 
 #### `channels.feishu`
 
@@ -71,16 +71,16 @@
 
 ## 飞书开放平台设置
 
-1. **创建应用**：前往 [飞书开放平台](https://open.feishu.cn/) 创建一个“企业自建应用”。
-2. **启用机器人**：在“应用功能”中开启“机器人”功能。
+1. **创建应用**：前往 [飞书开放平台](https://open.feishu.cn/) 创建一个"企业自建应用"。
+2. **启用机器人**：在"应用功能"中开启"机器人"功能。
 3. **权限配置**：
    - 需开启 `im:message:p2p:readonly` (接收单聊消息)
    - 需开启 `im:message:group_at:readonly` (接收群聊中 @ 机器人的消息)
    - 需开启 `im:message:send_as_bot` (以机器人身份发送消息)
 4. **事件订阅**：
    - 订阅事件：`im.message.receive_v1` (接收消息 v1.0)
-   - **WebSocket 模式**（推荐）：在“事件订阅”页面选择“使用长连接接入”，无需配置请求地址。
-   - **Webhook 模式**：请在“事件订阅”中配置你的公网请求地址。
+   - 在"事件订阅"页面选择"使用长连接接入"（WebSocket 模式），无需配置请求地址。
+   - ⚠️ **注意**：Webhook 模式暂未实现，请使用 WebSocket 模式。
 
 ## 开发者
 
