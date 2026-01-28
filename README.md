@@ -1,27 +1,31 @@
 # @moltbot/extension-feishu
 
-这是 Moltbot (Moltbot) 的原生飞书 (Feishu/Lark) 频道扩展插件。它允许你的 AI 助手直接接入飞书，通过单聊或群聊与用户进行交互。
+这是 [Moltbot](https://github.com/moltbot/moltbot) 的原生飞书 (Feishu/Lark) 频道扩展插件。它允许你的 AI 助手直接接入飞书，通过单聊或群聊与用户进行交互。
 
 ## 特性
 
 - **多模式支持**：支持 WebSocket（长连接）模式和 Webhook 模式。推荐使用 WebSocket 模式，无需公网 IP 或内网穿透即可快速接入。
-- **消息处理**：目前支持文本消息的接收与发送。
+- **高性能消息处理**：基于 Moltbot 的 `dispatchReplyWithBufferedBlockDispatcher` 管道，支持流式响应和复杂上下文处理。
 - **多账号管理**：支持在 Moltbot 中配置多个飞书自建应用账号。
-- **易于集成**：基于官方 `@larksuiteoapi/node-sdk` 构建，性能稳定，安全可靠。
+- **安全稳定**：基于官方 `@larksuiteoapi/node-sdk` 构建，并针对 Moltbot 进行了底层 Bug 适配与稳定性优化。
 
 ## 安装
 
-在你的 Moltbot 工作区中，可以通过 `moltbot` 命令行工具安装（假设你已经配置好了插件目录）：
+在你的 Moltbot 工作区中，可以通过以下步骤安装：
 
-```bash
-# 进入你的插件目录
-cd ~/.moltbot/extensions
-# 克隆或解压本项目
-git clone https://github.com/park-william/moltbot-extension-feishu feishu
-# 安装依赖
-cd feishu
-npm install
-```
+1. **进入插件目录**
+   通常是 `~/.moltbot/extensions` 或 `~/.clawdbot/extensions`（取决于你的配置）。
+
+2. **克隆本项目**
+   ```bash
+   git clone https://github.com/park-william/moltbot-extension-feishu feishu
+   ```
+
+3. **安装依赖**
+   ```bash
+   cd feishu
+   npm install
+   ```
 
 ## 配置
 
@@ -32,7 +36,7 @@ npm install
   "channels": {
     "feishu": {
       "accounts": {
-        "my-feishu-bot": {
+        "default": {
           "config": {
             "appId": "cli_xxxxxxxxxxxx",
             "appSecret": "xxxxxxxxxxxxxxxxxxxxxxxx",
@@ -43,6 +47,9 @@ npm install
     }
   },
   "plugins": {
+    "load": {
+      "paths": ["extensions"]
+    },
     "entries": {
       "feishu": {
         "enabled": true
@@ -59,8 +66,6 @@ npm install
 | `appId` | string | 是 | 飞书开放平台应用的 App ID |
 | `appSecret` | string | 是 | 飞书开放平台应用的 App Secret |
 | `mode` | string | 否 | 连接模式：`websocket` (默认) 或 `webhook` |
-| `encryptKey` | string | 否 | Webhook 模式下的加密策略 Key |
-| `verificationToken` | string | 否 | Webhook 模式下的事件验证 Token |
 
 ## 飞书开放平台设置
 
@@ -72,8 +77,8 @@ npm install
    - 需开启 `im:message:send_as_bot` (以机器人身份发送消息)
 4. **事件订阅**：
    - 订阅事件：`im.message.receive_v1` (接收消息 v1.0)
-   - 如果使用 **WebSocket 模式**，无需配置请求地址。
-   - 如果使用 **Webhook 模式**，请在“事件订阅”中配置你的公网请求地址。
+   - **WebSocket 模式**（推荐）：在“事件订阅”页面选择“使用长连接接入”，无需配置请求地址。
+   - **Webhook 模式**：请在“事件订阅”中配置你的公网请求地址。
 
 ## 开发者
 
