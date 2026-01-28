@@ -209,6 +209,7 @@ export class FeishuProvider {
                                 cfg: this.ctx.cfg,
                                 dispatcherOptions: {
                                     deliver: async (payload) => {
+                                        this.logger?.info(`[Feishu] Core dispatch deliver payload: ${JSON.stringify(payload)}`);
                                         await this.sendText(chatId, payload.text);
                                     }
                                 }
