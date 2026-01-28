@@ -67,9 +67,26 @@ export const feishuPlugin = {
             if (!account) throw new Error("Feishu account not found in config");
             
             const provider = new FeishuProvider({ account, log: console });
-            await provider.sendText(to, text);
+            const resp = await provider.sendText(to, text);
             
-            return { channel: "feishu", id: Date.now().toString() };
+            return { 
+                channel: "feishu", 
+                messageId: resp?.data?.message_id || Date.now().toString() 
+            };
+        },
+        sendMedia: async ({ to, text, mediaUrl, cfg, accountId }) => {
+            const account = cfg.channels?.feishu?.accounts?.[accountId || 'default'];
+            if (!account) throw new Error("Feishu account not found in config");
+            
+            const provider = new FeishuProvider({ account, log: console });
+            // For now, if we don't have a real image upload flow, just send the URL as text
+            const combined = text ? `${text}\n${mediaUrl}` : mediaUrl;
+            const resp = await provider.sendText(to, combined);
+            
+            return { 
+                channel: "feishu", 
+                messageId: resp?.data?.message_id || Date.now().toString() 
+            };
         }
     }
 };
