@@ -63,8 +63,10 @@ export const feishuPlugin = {
     outbound: {
         deliveryMode: "direct",
         sendText: async ({ to, text, cfg, accountId }) => {
-            const account = cfg.channels?.feishu?.accounts?.[accountId || 'default'];
-            if (!account) throw new Error("Feishu account not found in config");
+            const account = cfg.channels?.feishu?.accounts?.[accountId || 'default'] || 
+                          ( (accountId === 'default' || !accountId) && cfg.plugins?.entries?.feishu?.config ? { config: cfg.plugins.entries.feishu.config } : null);
+            
+            if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
             
             const provider = new FeishuProvider({ account, log: console });
             const resp = await provider.sendText(to, text);
@@ -75,8 +77,10 @@ export const feishuPlugin = {
             };
         },
         sendMedia: async ({ to, text, mediaUrl, cfg, accountId }) => {
-            const account = cfg.channels?.feishu?.accounts?.[accountId || 'default'];
-            if (!account) throw new Error("Feishu account not found in config");
+            const account = cfg.channels?.feishu?.accounts?.[accountId || 'default'] || 
+                          ( (accountId === 'default' || !accountId) && cfg.plugins?.entries?.feishu?.config ? { config: cfg.plugins.entries.feishu.config } : null);
+            
+            if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
             
             const provider = new FeishuProvider({ account, log: console });
             // For now, if we don't have a real image upload flow, just send the URL as text
