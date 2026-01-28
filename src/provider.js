@@ -244,7 +244,8 @@ export class FeishuProvider {
 
     async sendText(chatId, text) {
         try {
-            return await this.client.im.message.create({
+            this.logger?.info(`[Feishu] Sending text to ${chatId}: ${text.slice(0, 100)}...`);
+            const resp = await this.client.im.message.create({
                 params: { receive_id_type: 'chat_id' },
                 data: {
                     receive_id: chatId,
@@ -252,8 +253,10 @@ export class FeishuProvider {
                     content: JSON.stringify({ text }),
                 },
             });
+            this.logger?.info(`[Feishu] Send response: ${JSON.stringify(resp)}`);
+            return resp;
         } catch (err) {
-            this.logger?.error(`Failed to send text to ${chatId}: ${err.message}`);
+            this.logger?.error(`Failed to send text to ${chatId}: ${err.message}`, err);
             throw err;
         }
     }
