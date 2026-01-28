@@ -107,6 +107,10 @@ export class FeishuProvider {
                 'im.message.receive_v1': async (data) => {
                     try {
                         const { message, sender } = data;
+                        
+                        // Debug log for raw message structure
+                        this.logger?.info(`[Feishu] Received ${message.message_type}: ${JSON.stringify(message).slice(0, 500)}`);
+
                         let contentText = "";
                         let mediaPath = undefined;
                         let mediaType = undefined;
@@ -122,7 +126,12 @@ export class FeishuProvider {
                                 // We flatten it to a single string
                                 if (content && content.content) {
                                     contentText = content.content.map(paragraph => 
-                                        paragraph.map(elem => elem.text || "").join("")
+                                        paragraph.map(elem => {
+                                            if (elem.tag === 'text') return elem.text;
+                                            if (elem.tag === 'at') return `@${elem.user_name || 'User'}`;
+                                            if (elem.tag === 'a') return elem.text; // link
+                                            return elem.text || "";
+                                        }).join("")
                                     ).join("\n");
                                 }
                                 // If title exists, prepend it
