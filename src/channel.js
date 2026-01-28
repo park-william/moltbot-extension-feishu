@@ -9,6 +9,14 @@ export const feishuPlugin = {
         media: true, // Enabled media support
     },
 
+    messaging: {
+        normalizeTarget: (target) => {
+            // Feishu IDs typically start with oc_ (chat), ou_ (user), or on_ (union)
+            if (/^(oc_|ou_|on_)/.test(target)) return target;
+            return null;
+        }
+    },
+
     // Configuration methods
     config: {
         listAccountIds: (cfg) => {
