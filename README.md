@@ -14,7 +14,7 @@
 在你的 Moltbot 工作区中，可以通过以下步骤安装：
 
 1. **进入插件目录**
-   通常是 `~/.moltbot/extensions` 或 `~/.clawdbot/extensions`（取决于你的配置）。
+   通常是 `~/moltbot/extensions` 或 `~/clawdbot/extensions`（取决于你的配置）。
 
 2. **克隆本项目**
    ```bash
