@@ -119,11 +119,17 @@ export class FeishuProvider {
                             contentText = JSON.parse(message.content).text;
                             // Replace @mentions placeholders with names if available
                             if (message.mentions && message.mentions.length > 0) {
-                                message.mentions.forEach(mention => {
-                                    if (mention.key && mention.name) {
-                                        contentText = contentText.replaceAll(mention.key, `@${mention.name}`);
-                                    }
-                                });
+                                try {
+                                    message.mentions.forEach(mention => {
+                                        if (mention.key && mention.name) {
+                                            // Use global replace with escaped key just in case, though replaceAll covers string literal
+                                            // Ensure key is treated as literal string
+                                            contentText = contentText.split(mention.key).join(`@${mention.name}`);
+                                        }
+                                    });
+                                } catch (mentionErr) {
+                                    this.logger?.warn(`Failed to replace mentions: ${mentionErr.message}`);
+                                }
                             }
                         } else if (message.message_type === 'post') {
                             // Handle rich text (post) messages
