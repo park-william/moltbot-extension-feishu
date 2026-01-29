@@ -1,5 +1,11 @@
 import { FeishuProvider } from './provider.js';
 
+// Helper to resolve account from config
+const resolveAccount = (cfg, accountId) => {
+    return cfg.channels?.feishu?.accounts?.[accountId || 'default'] || 
+           ( (accountId === 'default' || !accountId) && cfg.plugins?.entries?.feishu?.config ? { config: cfg.plugins.entries.feishu.config } : null);
+};
+
 export const feishuPlugin = {
     id: "feishu",
     
@@ -62,10 +68,9 @@ export const feishuPlugin = {
     // Outbound dispatcher (Agent reply logic)
     outbound: {
         deliveryMode: "direct",
+
         sendText: async ({ to, text, cfg, accountId }) => {
-            const account = cfg.channels?.feishu?.accounts?.[accountId || 'default'] || 
-                          ( (accountId === 'default' || !accountId) && cfg.plugins?.entries?.feishu?.config ? { config: cfg.plugins.entries.feishu.config } : null);
-            
+            const account = resolveAccount(cfg, accountId);
             if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
             
             const provider = new FeishuProvider({ account, log: console });
@@ -76,21 +81,42 @@ export const feishuPlugin = {
                 messageId: resp?.data?.message_id || Date.now().toString() 
             };
         },
-        sendMedia: async ({ to, text, mediaUrl, cfg, accountId }) => {
-            const account = cfg.channels?.feishu?.accounts?.[accountId || 'default'] || 
-                          ( (accountId === 'default' || !accountId) && cfg.plugins?.entries?.feishu?.config ? { config: cfg.plugins.entries.feishu.config } : null);
-            
-            if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
+
+        sendImage: async ({ to, filePath, cfg, accountId }) => {
+            const account = resolveAccount(cfg, accountId);
+            if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found`);
             
             const provider = new FeishuProvider({ account, log: console });
-            // For now, if we don't have a real image upload flow, just send the URL as text
-            const combined = text ? `${text}\n${mediaUrl}` : mediaUrl;
-            const resp = await provider.sendText(to, combined);
             
-            return { 
-                channel: "feishu", 
-                messageId: resp?.data?.message_id || Date.now().toString() 
-            };
+            // Upload first
+            const imageKey = await provider.uploadImage(filePath);
+            // Then send
+            const resp = await provider.sendImage(to, imageKey);
+            
+            return { channel: "feishu", messageId: resp?.data?.message_id };
+        },
+
+        sendFile: async ({ to, filePath, cfg, accountId }) => {
+            const account = resolveAccount(cfg, accountId);
+            const provider = new FeishuProvider({ account, log: console });
+            
+            const fileKey = await provider.uploadFile(filePath, 'stream');
+            const resp = await provider.sendFile(to, fileKey);
+            
+            return { channel: "feishu", messageId: resp?.data?.message_id };
+        },
+
+        sendVideo: async ({ to, filePath, cfg, accountId }) => {
+            const account = resolveAccount(cfg, accountId);
+            const provider = new FeishuProvider({ account, log: console });
+            
+            // Fallback: Send video as regular file to avoid ownership/cover issues
+            // Upload as generic stream (not 'mp4') to match 'file' message type
+            const fileKey = await provider.uploadFile(filePath, 'stream');
+            // Send as file message
+            const resp = await provider.sendFile(to, fileKey);
+            
+            return { channel: "feishu", messageId: resp?.data?.message_id };
         }
     }
 };

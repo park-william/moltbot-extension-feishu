@@ -1,6 +1,5 @@
 import { feishuPlugin } from './src/channel.js';
-
-let coreRuntime;
+import { setCoreRuntime } from './src/runtime.js';
 
 /**
  * Extension entry point for Clawdbot
@@ -11,7 +10,9 @@ const extension = {
   description: "Native Feishu channel integration",
   
   register(api) {
-    coreRuntime = api.runtime;
+    // Store runtime in our dedicated module to avoid circular dependency
+    setCoreRuntime(api.runtime);
+    
     // Inject into Clawdbot's channel registry
     api.registerChannel({ 
         plugin: {
@@ -24,5 +25,4 @@ const extension = {
   },
 };
 
-export function getCoreRuntime() { return coreRuntime; }
 export default extension;

@@ -3,7 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { pipeline } from 'node:stream/promises';
-import { getCoreRuntime } from '../index.js';
+import { getCoreRuntime } from './runtime.js';
+
+// A simple 32x32 gray placeholder icon for video cover (Base64)
+const DEFAULT_VIDEO_COVER_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAxwAAAMcBwhGQBgAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAADdSURBVFiF7ZYxCsMwEEW/x0sI3aO36CE6d+8RMnfv0aF79BAZPILp0iGDOyXjQ6AwsGzL//0QCOvO+ySOIwCAMebcc87lOedLz/N+5RzX1XW963ne/Z8A2F5tG4B1y7Zt3/fc930xDAMYYzEfx/G2KIpig3O+f88B2N7z/d9+v68VRREYY1Ff13U0TROUZRk451F/u92i7/uibduiaZqgbduCcx71nPOl7/uX/BwA2F5tG4B1y7Isy7Isy7Isy7Isy7Isy7Isy7Isy7Isy/8BPM+755zLfd//A3i/AH71Plf62eF6AAAAAElFTkSuQmCC";
 
 export class FeishuProvider {
     constructor(ctx) {
@@ -223,6 +226,7 @@ export class FeishuProvider {
                             OriginatingChannel: 'feishu',
                             MediaPath: mediaPath,
                             MediaType: mediaType,
+                            MediaMimeType: mediaType,
                         };
                         
                         // Dispatch via standard reply interface
@@ -235,7 +239,36 @@ export class FeishuProvider {
                                 dispatcherOptions: {
                                     deliver: async (payload) => {
                                         this.logger?.info(`[Feishu] Core dispatch deliver payload: ${JSON.stringify(payload)}`);
-                                        await this.sendText(chatId, payload.text);
+                                        
+                                        // Handle Media (Video/Image/File)
+                                        const mediaFile = payload.mediaUrl || (payload.mediaUrls && payload.mediaUrls[0]);
+                                        if (mediaFile) {
+                                            try {
+                                                const lower = mediaFile.toLowerCase();
+                                                this.logger?.info(`[Feishu] Processing media file: ${mediaFile}`);
+
+                                                if (/\.(jpg|jpeg|png|gif|webp|bmp)$/.test(lower)) {
+                                                    // Images
+                                                    const imageKey = await this.uploadImage(mediaFile);
+                                                    await this.sendImage(chatId, imageKey);
+                                                } else {
+                                                    // Everything else (Videos, Files, PDFs) -> Send as File attachment
+                                                    // IMPORTANT: To send as msg_type='file', we MUST upload as file_type='stream'.
+                                                    // If we upload as 'mp4', Feishu expects msg_type='media' and requires a cover image.
+                                                    // By forcing 'stream', we bypass the strict video validation and just send the raw file.
+                                                    const fileType = 'stream';
+                                                    const fileKey = await this.uploadFile(mediaFile, fileType);
+                                                    await this.sendFile(chatId, fileKey);
+                                                }
+                                            } catch (e) {
+                                                this.logger?.error(`[Feishu] Failed to send media: ${e.message}`);
+                                            }
+                                        }
+
+                                        // Handle Text (only if present)
+                                        if (payload.text) {
+                                            await this.sendText(chatId, payload.text);
+                                        }
                                     }
                                 }
                             }).catch(err => {
@@ -285,5 +318,116 @@ export class FeishuProvider {
             this.logger?.error(`Failed to send text to ${chatId}: ${err.message}`, err);
             throw err;
         }
+    }
+
+    async uploadImage(filePath) {
+        try {
+            const fileStream = fs.createReadStream(filePath);
+            const resp = await this.client.im.image.create({
+                data: {
+                    image_type: 'message',
+                    image: fileStream,
+                }
+            });
+            return resp.image_key;
+        } catch (err) {
+            this.logger?.error(`Failed to upload image ${filePath}: ${err.message}`);
+            throw err;
+        }
+    }
+
+    async uploadFile(filePath, fileType = 'stream') {
+        try {
+            const fileName = path.basename(filePath);
+            
+            // Debug: Check file stats
+            try {
+                const stats = fs.statSync(filePath);
+                this.logger?.info(`[Feishu] Uploading file: ${filePath} (Size: ${stats.size} bytes)`);
+            } catch (e) {
+                this.logger?.error(`[Feishu] File stat failed for ${filePath}: ${e.message}`);
+                throw e;
+            }
+
+            const fileStream = fs.createReadStream(filePath);
+            
+            const startTime = Date.now();
+            const resp = await this.client.im.file.create({
+                data: {
+                    file_type: fileType,
+                    file_name: fileName,
+                    duration: 3000,
+                    file: fileStream,
+                }
+            });
+            
+            const duration = Date.now() - startTime;
+            this.logger?.info(`[Feishu] Upload success! Key: ${resp.file_key}, Time: ${duration}ms`);
+            
+            return resp.file_key;
+        } catch (err) {
+            this.logger?.error(`[Feishu] Failed to upload file ${filePath}: ${err.message}`, err.response ? err.response.data : '');
+            throw err;
+        }
+    }
+
+    async sendImage(chatId, imageKey) {
+        return await this.client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: {
+                receive_id: chatId,
+                msg_type: 'image',
+                content: JSON.stringify({ image_key: imageKey }),
+            },
+        });
+    }
+
+    async sendFile(chatId, fileKey) {
+        return await this.client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: {
+                receive_id: chatId,
+                msg_type: 'file',
+                content: JSON.stringify({ file_key: fileKey }),
+            },
+        });
+    }
+
+    async sendVideo(chatId, fileKey, imageKey) {
+        // If no cover image provided, try to upload the default one
+        if (!imageKey) {
+            try {
+                const imgBuffer = Buffer.from(DEFAULT_VIDEO_COVER_BASE64, 'base64');
+                const tempCoverPath = path.join(os.tmpdir(), `feishu-cover-${Date.now()}.png`);
+                await fs.promises.writeFile(tempCoverPath, imgBuffer);
+                
+                imageKey = await this.uploadImage(tempCoverPath);
+                
+                fs.unlink(tempCoverPath, () => {}); 
+            } catch (e) {
+                this.logger?.warn("Failed to upload default video cover: " + e.message);
+                // Fallback: If cover upload fails, send as regular file instead of media card
+                // Feishu requires image_key for media messages.
+                this.logger?.info("Falling back to sending video as file attachment.");
+                return this.sendFile(chatId, fileKey);
+            }
+        }
+
+        // Double check: if we still don't have an imageKey, send as file
+        if (!imageKey) {
+             return this.sendFile(chatId, fileKey);
+        }
+
+        return await this.client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: {
+                receive_id: chatId,
+                msg_type: 'media',
+                content: JSON.stringify({ 
+                    file_key: fileKey,
+                    image_key: imageKey
+                }),
+            },
+        });
     }
 }
