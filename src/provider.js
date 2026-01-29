@@ -38,17 +38,18 @@ export class FeishuProvider {
         this.wsClient = null;
     }
 
-    async downloadImage(messageId, imageKey) {
+    async downloadResource(messageId, fileKey, type) {
         try {
             const resp = await this.client.im.messageResource.get({
-                path: { message_id: messageId, file_key: imageKey },
-                params: { type: 'image' },
+                path: { message_id: messageId, file_key: fileKey },
+                params: { type },
             });
 
-            if (!resp) throw new Error("Empty response from Feishu");
+            if (!resp) throw new Error(`Empty response from Feishu for ${type}`);
 
             const tmpDir = os.tmpdir();
-            const filename = `feishu-${messageId}-${imageKey}.image`;
+            const ext = type === 'image' ? 'image' : (type === 'audio' ? 'opus' : 'bin');
+            const filename = `feishu-${messageId}-${fileKey}.${ext}`;
             const filePath = path.join(tmpDir, filename);
 
             // Lark SDK v1.x response wrapper handling
@@ -73,15 +74,24 @@ export class FeishuProvider {
                      await pipeline(resp.data, fs.createWriteStream(filePath));
                  }
             } else {
-                this.logger?.warn(`Unknown response type for image download: ${resp.constructor?.name}, keys: ${Object.keys(resp)}`);
-                throw new Error("Received invalid response type for image");
+                this.logger?.warn(`Unknown response type for resource download: ${resp.constructor?.name}, keys: ${Object.keys(resp)}`);
+                throw new Error(`Received invalid response type for ${type}`);
             }
 
-            return { path: filePath, type: 'image/jpeg' }; 
+            const mimeType = type === 'image' ? 'image/jpeg' : (type === 'audio' ? 'audio/opus' : 'application/octet-stream');
+            return { path: filePath, type: mimeType }; 
         } catch (err) {
-            this.logger?.error(`Failed to download image ${imageKey}: ${err.message}`);
+            this.logger?.error(`Failed to download ${type} ${fileKey}: ${err.message}`);
             return null;
         }
+    }
+
+    async downloadImage(messageId, imageKey) {
+        return this.downloadResource(messageId, imageKey, 'image');
+    }
+
+    async downloadAudio(messageId, fileKey) {
+        return this.downloadResource(messageId, fileKey, 'audio');
     }
 
     async start() {
@@ -169,6 +179,21 @@ export class FeishuProvider {
                                 }
                             } catch (e) {
                                 this.logger?.warn("Failed to process image message: " + e.message);
+                            }
+                        } else if (message.message_type === 'audio') {
+                            try {
+                                const content = JSON.parse(message.content);
+                                const fileKey = content.file_key;
+                                if (fileKey) {
+                                    const downloaded = await this.downloadAudio(message.message_id, fileKey);
+                                    if (downloaded) {
+                                        mediaPath = downloaded.path;
+                                        mediaType = downloaded.type;
+                                        contentText = "<media:audio>";
+                                    }
+                                }
+                            } catch (e) {
+                                this.logger?.warn("Failed to process audio message: " + e.message);
                             }
                         }
 
