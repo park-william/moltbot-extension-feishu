@@ -216,10 +216,11 @@ export class FeishuProvider {
 
                         // Use simple reply context if core runtime is not fully available or differs
                         // Standard Moltbot Channel Payload
+                        // IMPORTANT: 'To' should be the chat_id, not appId, so that message tool can auto-infer target
                         const ctxPayload = {
                             Body: contentText,
                             From: senderId,
-                            To: this.appId,
+                            To: chatId,  // Changed from this.appId to chatId for proper target inference
                             SessionKey: 'feishu:' + chatId,
                             AccountId: this.ctx.accountId || 'default',
                             MessageSid: message.message_id,

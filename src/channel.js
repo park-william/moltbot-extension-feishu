@@ -27,6 +27,17 @@ export const feishuPlugin = {
         },
     },
 
+    // Threading adapter: enables message tool to auto-infer target from current session
+    threading: {
+        resolveReplyToMode: ({ cfg }) => cfg.channels?.feishu?.replyToMode ?? "off",
+        buildToolContext: ({ context, hasRepliedRef }) => ({
+            currentChannelId: context.To?.trim() || undefined,
+            currentChannelProvider: "feishu",
+            currentThreadTs: context.ReplyToId || undefined,
+            hasRepliedRef,
+        }),
+    },
+
     // Configuration methods
     config: {
         listAccountIds: (cfg) => {
