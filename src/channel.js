@@ -82,6 +82,41 @@ export const feishuPlugin = {
             };
         },
 
+        // REQUIRED by Moltbot core: sendMedia handles all media types
+        // ctx.mediaUrl contains the file path, ctx.text contains the caption
+        sendMedia: async ({ to, text, mediaUrl, cfg, accountId }) => {
+            const account = resolveAccount(cfg, accountId);
+            if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
+            
+            const provider = new FeishuProvider({ account, log: console });
+            const lower = (mediaUrl || '').toLowerCase();
+            
+            let mediaMessageId;
+            
+            // Determine media type by extension
+            if (/\.(jpg|jpeg|png|gif|webp|bmp)$/.test(lower)) {
+                // Image
+                const imageKey = await provider.uploadImage(mediaUrl);
+                const resp = await provider.sendImage(to, imageKey);
+                mediaMessageId = resp?.data?.message_id;
+            } else {
+                // Everything else (audio, video, documents) -> send as file
+                const fileKey = await provider.uploadFile(mediaUrl, 'stream');
+                const resp = await provider.sendFile(to, fileKey);
+                mediaMessageId = resp?.data?.message_id;
+            }
+            
+            // If there's a caption, send it as a separate text message
+            if (text && text.trim()) {
+                await provider.sendText(to, text);
+            }
+            
+            return { 
+                channel: "feishu", 
+                messageId: mediaMessageId || Date.now().toString() 
+            };
+        },
+
         sendImage: async ({ to, filePath, cfg, accountId }) => {
             const account = resolveAccount(cfg, accountId);
             if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found`);
