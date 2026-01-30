@@ -43,9 +43,12 @@ export class FeishuProvider {
 
     async downloadResource(messageId, fileKey, type) {
         try {
+            // Feishu API resource types are 'image' or 'file'. Audio messages use 'file'.
+            const apiType = type === 'audio' ? 'file' : type;
+            
             const resp = await this.client.im.messageResource.get({
                 path: { message_id: messageId, file_key: fileKey },
-                params: { type },
+                params: { type: apiType },
             });
 
             if (!resp) throw new Error(`Empty response from Feishu for ${type}`);
