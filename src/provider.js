@@ -217,6 +217,7 @@ export class FeishuProvider {
                         // Use simple reply context if core runtime is not fully available or differs
                         // Standard Moltbot Channel Payload
                         // IMPORTANT: 'To' should be the chat_id, not appId, so that message tool can auto-infer target
+                        // IMPORTANT: 'Provider' is required for buildThreadingToolContext to identify the channel
                         const ctxPayload = {
                             Body: contentText,
                             From: senderId,
@@ -224,7 +225,13 @@ export class FeishuProvider {
                             SessionKey: 'feishu:' + chatId,
                             AccountId: this.ctx.accountId || 'default',
                             MessageSid: message.message_id,
+                            // These fields are critical for message tool to auto-infer target
+                            Provider: 'feishu',
+                            Surface: 'feishu',
                             OriginatingChannel: 'feishu',
+                            OriginatingTo: chatId,
+                            ChatType: message.chat_type === 'group' ? 'group' : 'direct',
+                            // Media fields
                             MediaPath: mediaPath,
                             MediaType: mediaType,
                             MediaMimeType: mediaType,
