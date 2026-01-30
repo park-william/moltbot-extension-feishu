@@ -241,7 +241,34 @@ export class FeishuProvider {
                                         this.logger?.info(`[Feishu] Core dispatch deliver payload: ${JSON.stringify(payload)}`);
                                         
                                         // Handle Media (Video/Image/File)
-                                        const mediaFile = payload.mediaUrl || (payload.mediaUrls && payload.mediaUrls[0]);
+                                        let mediaFile = payload.mediaUrl || (payload.mediaUrls && payload.mediaUrls[0]);
+                                        let textToSend = payload.text || '';
+                                        
+                                        // NEW: Extract media paths from markdown syntax if no explicit mediaUrl
+                                        // Matches: ![alt](path) or just bare file paths starting with /
+                                        if (!mediaFile && textToSend) {
+                                            // Pattern 1: Markdown image/file syntax ![...](path)
+                                            const mdMatch = textToSend.match(/!\[[^\]]*\]\(([^)]+)\)/);
+                                            if (mdMatch && mdMatch[1]) {
+                                                const extractedPath = mdMatch[1];
+                                                // Verify it looks like a file path (starts with / or ./)
+                                                if (extractedPath.startsWith('/') || extractedPath.startsWith('./')) {
+                                                    mediaFile = extractedPath;
+                                                    // Remove the markdown syntax from text
+                                                    textToSend = textToSend.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
+                                                    this.logger?.info(`[Feishu] Extracted media from markdown: ${mediaFile}`);
+                                                }
+                                            }
+                                            
+                                            // Pattern 2: MEDIA: prefix (common Moltbot format)
+                                            const mediaMatch = textToSend.match(/MEDIA:\s*(\S+)/i);
+                                            if (!mediaFile && mediaMatch && mediaMatch[1]) {
+                                                mediaFile = mediaMatch[1];
+                                                textToSend = textToSend.replace(/MEDIA:\s*\S+/gi, '').trim();
+                                                this.logger?.info(`[Feishu] Extracted media from MEDIA: tag: ${mediaFile}`);
+                                            }
+                                        }
+                                        
                                         if (mediaFile) {
                                             try {
                                                 const lower = mediaFile.toLowerCase();
@@ -265,9 +292,9 @@ export class FeishuProvider {
                                             }
                                         }
 
-                                        // Handle Text (only if present)
-                                        if (payload.text) {
-                                            await this.sendText(chatId, payload.text);
+                                        // Handle Text (only if present after extraction)
+                                        if (textToSend && textToSend.trim()) {
+                                            await this.sendText(chatId, textToSend);
                                         }
                                     }
                                 }
