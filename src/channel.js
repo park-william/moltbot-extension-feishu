@@ -85,7 +85,7 @@ export const feishuPlugin = {
             if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
             
             const provider = new FeishuProvider({ account, log: console });
-            const resp = await provider.sendText(to, text);
+            const resp = await provider.sendAuto(to, text);
             
             return { 
                 channel: "feishu", 
@@ -119,7 +119,7 @@ export const feishuPlugin = {
             
             // If there's a caption, send it as a separate text message
             if (text && text.trim()) {
-                await provider.sendText(to, text);
+                await provider.sendAuto(to, text);
             }
             
             return { 

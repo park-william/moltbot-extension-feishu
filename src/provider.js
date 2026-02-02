@@ -305,7 +305,7 @@ export class FeishuProvider {
 
                                         // Handle Text (only if present after extraction)
                                         if (textToSend && textToSend.trim()) {
-                                            await this.sendText(chatId, textToSend);
+                                            await this.sendAuto(chatId, textToSend);
                                         }
                                     }
                                 }
@@ -339,6 +339,18 @@ export class FeishuProvider {
         });
     }
 
+    async sendAuto(chatId, text) {
+        // Heuristic to detect if we should use a card for markdown
+        // We use cards if the text contains markdown syntax or multiple lines
+        const isMarkdown = /[#*`\[\-]/.test(text) || text.includes('\n');
+        
+        if (isMarkdown) {
+            return this.sendCard(chatId, text);
+        } else {
+            return this.sendText(chatId, text);
+        }
+    }
+
     async sendText(chatId, text) {
         try {
             this.logger?.info(`[Feishu] Sending text to ${chatId}: ${text.slice(0, 100)}...`);
@@ -354,6 +366,46 @@ export class FeishuProvider {
             return resp;
         } catch (err) {
             this.logger?.error(`Failed to send text to ${chatId}: ${err.message}`, err);
+            throw err;
+        }
+    }
+
+    async sendCard(chatId, markdown) {
+        try {
+            this.logger?.info(`[Feishu] Sending card to ${chatId}: ${markdown.slice(0, 100)}...`);
+            
+            // Precise Schema 2.0 structure as confirmed by user testing
+            const cardContent = {
+                schema: "2.0",
+                header: {
+                    title: {
+                        tag: "plain_text",
+                        content: "小林"
+                    },
+                    template: "blue"
+                },
+                body: {
+                    elements: [
+                        {
+                            tag: "markdown",
+                            content: markdown
+                        }
+                    ]
+                }
+            };
+
+            const resp = await this.client.im.message.create({
+                params: { receive_id_type: 'chat_id' },
+                data: {
+                    receive_id: chatId,
+                    msg_type: 'interactive',
+                    content: JSON.stringify(cardContent),
+                },
+            });
+            this.logger?.info(`[Feishu] Card send response: ${JSON.stringify(resp)}`);
+            return resp;
+        } catch (err) {
+            this.logger?.error(`Failed to send card to ${chatId}: ${err.message}`, err);
             throw err;
         }
     }
