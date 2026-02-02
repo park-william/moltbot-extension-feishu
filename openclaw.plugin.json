@@ -1,0 +1,35 @@
+{
+  "id": "feishu",
+  "channels": [
+    "feishu"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "appId": {
+        "type": "string",
+        "title": "App ID"
+      },
+      "appSecret": {
+        "type": "string",
+        "title": "App Secret"
+      },
+      "encryptKey": {
+        "type": "string",
+        "title": "Encrypt Key"
+      },
+      "verificationToken": {
+        "type": "string",
+        "title": "Verification Token"
+      },
+      "mode": {
+        "type": "string",
+        "title": "Connection Mode",
+        "enum": ["websocket", "webhook"],
+        "default": "websocket"
+      }
+    },
+    "required": ["appId", "appSecret"]
+  }
+}
