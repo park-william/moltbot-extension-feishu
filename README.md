@@ -126,50 +126,100 @@
 - 为了规避飞书严格的资源归属权校验（Bot is NOT the owner...），本插件目前将所有视频文件（`.mp4`, `.mov` 等）统一作为**文件附件**（File）发送，而不是视频卡片（Media）。
 - 这保证了发送成功率，但用户在聊天窗口中看到的是文件图标而非预览图。用户点击文件后依然可以正常下载和播放。
 
-## 互动卡片使用指南
+## 功能特性与使用指南
 
-### 发送状态卡片
+### 1. Markdown 表格支持
 
-状态卡片支持以下状态：
-- `pending` (灰色) - 等待中
-- `running` (蓝色) - 进行中
-- `success` (绿色) - 成功
-- `error` (红色) - 失败
-- `warning` (橙色) - 警告
+插件会自动将标准 Markdown 表格语法转换为飞书原生的 `<table>` 组件 (Schema 2.0)，确保在飞书客户端中完美渲染。
 
-### 卡片更新流程
-
-1. 发送初始卡片，获取 `message_id`
-2. 任务完成后，使用 `message_id` 更新卡片状态
-
-### 按钮配置
-
-```javascript
-buttons: [
-    { text: "确认", value: "confirm", type: "primary" },
-    { text: "取消", value: "cancel", type: "default" }
-]
-```
-
-按钮类型：
-- `primary` - 主要按钮（蓝色）
-- `danger` - 危险按钮（红色）
-- `default` - 默认按钮（灰色）
-
-### Markdown 表格语法
-
-插件会自动将标准 Markdown 表格转换为飞书表格组件：
-
+**使用示例**：
 ```markdown
-| 名称 | 状态 | 进度 |
-|------|------|------|
-| 任务1 | 完成 | 100% |
-| 任务2 | 进行中 | 50% |
+| 任务名称 | 状态 | 负责人 |
+| :--- | :--- | :--- |
+| 需求分析 | ✅ 完成 | Alice |
+| 系统设计 | 🔄 进行中 | Bob |
+| 代码开发 | ⏳ 等待中 | Charlie |
 ```
+
+**渲染效果**：
+- 自动识别表头和数据行
+- 自动设置列宽和对齐方式
+- 支持在表格单元格中使用 Emoji
 
 **限制说明**：
 - 最多支持 10 列
-- 一张卡片最多 5 个表格
+- 一张卡片建议不超过 5 个表格
+
+### 2. 标题层级支持
+
+飞书卡片仅支持一级标题和二级标题。本插件会自动处理标题层级：
+
+- `# 标题` → 转换为飞书一级标题
+- `## 标题` → 转换为飞书二级标题
+- `### 标题` 及更小标题 → 自动降级为二级标题显示
+
+### 3. 互动卡片与按钮
+
+支持发送带按钮的互动卡片，并处理按钮点击回调。
+
+**发送带按钮的卡片**：
+在发送消息时，通过 `options` 参数传入 `buttons` 数组。
+
+```javascript
+// 示例：发送带按钮的卡片
+await provider.sendCard(chatId, "**请确认执行操作**", {
+    buttons: [
+        { text: "✅ 确认", value: "confirm", type: "primary" },
+        { text: "❌ 取消", value: "cancel", type: "danger" }
+    ]
+});
+```
+
+**按钮类型 (`type`)**：
+- `primary`：主要按钮（蓝色背景）
+- `default`：默认按钮（白色背景，灰色边框）
+- `danger`：危险按钮（红色背景）
+
+**处理按钮点击**：
+当用户点击按钮时，插件会自动将点击事件转换为一条文本消息，格式为：
+`[Button Clicked] <value>`
+
+例如，点击上面的"确认"按钮，Agent 会收到：
+`[Button Clicked] confirm`
+
+Agent 可以监听此类消息并执行相应的逻辑（如回复"操作已确认"）。
+
+### 4. 状态卡片与更新
+
+支持发送带状态颜色的卡片，并支持原地更新卡片内容（例如将"进行中"更新为"已完成"）。
+
+**状态类型**：
+- `pending` (灰色 ⏳)
+- `running` (蓝色 🔄)
+- `success` (绿色 ✅)
+- `error` (红色 ❌)
+- `warning` (橙色 ⚠️)
+
+**使用流程**：
+
+1. **发送初始卡片**：
+   ```javascript
+   const resp = await provider.sendStatusCard(chatId, {
+       title: "任务执行中",
+       status: "running",
+       content: "正在处理数据..."
+   });
+   const messageId = resp.data.message_id; // 保存消息 ID
+   ```
+
+2. **更新卡片状态**：
+   ```javascript
+   await provider.updateStatusCard(messageId, {
+       title: "任务已完成",
+       status: "success",
+       content: "数据处理完毕，耗时 5s。"
+   });
+   ```
 
 ## 开发者
 
