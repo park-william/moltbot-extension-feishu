@@ -480,6 +480,59 @@ export class FeishuProvider {
             return "";
         }
     }
+
+    /**
+     * 下载飞书图片到本地
+     * @param {string} imageKey - 图片的 image_key
+     * @param {string} messageId - 消息 ID
+     * @returns {Promise<string|null>} 本地文件路径或 null
+     */
+    async downloadImage(imageKey, messageId) {
+        try {
+            // 创建媒体目录
+            const homeDir = process.env.HOME || '/tmp';
+            const mediaDir = path.join(homeDir, '.openclaw', 'media', 'feishu');
+            if (!fs.existsSync(mediaDir)) {
+                fs.mkdirSync(mediaDir, { recursive: true });
+            }
+
+            // 使用 image_key 作为文件名
+            const filePath = path.join(mediaDir, `${imageKey}.png`);
+            
+            // 如果文件已存在，直接返回
+            if (fs.existsSync(filePath)) {
+                return filePath;
+            }
+
+            // 下载图片
+            const response = await this.client.im.messageResource.get({
+                path: {
+                    message_id: messageId,
+                    file_key: imageKey,
+                },
+                params: {
+                    type: 'image',
+                },
+            });
+
+            // 写入文件
+            if (response && response.data) {
+                const writeStream = fs.createWriteStream(filePath);
+                await new Promise((resolve, reject) => {
+                    response.data.pipe(writeStream);
+                    response.data.on('end', resolve);
+                    response.data.on('error', reject);
+                });
+                this.safeLogger.info(`[Feishu] Downloaded image to ${filePath}`);
+                return filePath;
+            }
+            
+            return null;
+        } catch (e) {
+            this.safeLogger.error(`[Feishu] Failed to download image: ${e.message}`);
+            return null;
+        }
+    }
     
     async start() {
         const core = getCoreRuntime();
@@ -493,6 +546,7 @@ export class FeishuProvider {
             'im.message.receive_v1': async (data) => {
                 const { message, sender } = data;
                 let contentText = "";
+                let mediaPaths = [];
 
                 if (message.message_type === 'text') {
                     try {
@@ -504,8 +558,27 @@ export class FeishuProvider {
                     // 处理富文本消息
                     contentText = this.parsePostContent(message.content);
                 } else if (message.message_type === 'image') {
-                    // 处理图片消息
-                    contentText = "[用户发送了一张图片]";
+                    // 处理图片消息：下载图片并作为附件传递
+                    try {
+                        const content = typeof message.content === 'string' 
+                            ? JSON.parse(message.content) 
+                            : message.content;
+                        const imageKey = content.image_key;
+                        if (imageKey) {
+                            const localPath = await this.downloadImage(imageKey, message.message_id);
+                            if (localPath) {
+                                mediaPaths.push(localPath);
+                                contentText = "[用户发送了一张图片]";
+                            } else {
+                                contentText = "[用户发送了一张图片，但下载失败]";
+                            }
+                        } else {
+                            contentText = "[用户发送了一张图片]";
+                        }
+                    } catch (e) {
+                        this.safeLogger.error(`Failed to process image message: ${e.message}`);
+                        contentText = "[用户发送了一张图片]";
+                    }
                 } else if (message.message_type === 'file') {
                     // 处理文件消息
                     contentText = "[用户发送了一个文件]";
@@ -526,14 +599,24 @@ export class FeishuProvider {
                 const chatId = message.chat_id;
                 
                 if (core && core.channel && core.channel.reply) {
+                    const ctx = { 
+                        Body: contentText, 
+                        From: sender.sender_id.open_id, 
+                        To: chatId, 
+                        SessionKey: 'feishu:' + chatId, 
+                        Provider: 'feishu' 
+                    };
+                    
+                    // 如果有媒体文件，添加到上下文
+                    if (mediaPaths.length > 0) {
+                        ctx.MediaPaths = mediaPaths;
+                        ctx.MediaUrls = mediaPaths; // 本地路径也作为 URL
+                        ctx.MediaPath = mediaPaths[0];
+                        ctx.MediaUrl = mediaPaths[0];
+                    }
+                    
                     core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-                        ctx: { 
-                            Body: contentText, 
-                            From: sender.sender_id.open_id, 
-                            To: chatId, 
-                            SessionKey: 'feishu:' + chatId, 
-                            Provider: 'feishu' 
-                        },
+                        ctx,
                         cfg: this.ctx.cfg,
                         dispatcherOptions: {
                             deliver: async (payload) => {
