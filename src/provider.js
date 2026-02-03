@@ -427,16 +427,15 @@ export class FeishuProvider {
      */
     parsePostContent(contentJson) {
         try {
-            const content = JSON.parse(contentJson);
-            // post 消息结构: { "zh_cn": { "title": "...", "content": [ [ {tag, text...} ] ] } }
-            // 通常使用 content[keys[0]] 获取第一个语言版本
+            // 兼容 content 已经是对象的情况
+            const content = typeof contentJson === 'string' ? JSON.parse(contentJson) : contentJson;
+            
             const keys = Object.keys(content);
             if (keys.length === 0) return "";
             
             const postBody = content[keys[0]];
             const lines = [];
             
-            // 如果有标题，作为第一行 (一级标题)
             if (postBody.title) {
                 lines.push(`# ${postBody.title}`);
             }
@@ -452,7 +451,6 @@ export class FeishuProvider {
                         } else if (elem.tag === 'at') {
                             lineParts.push(`@${elem.user_name || elem.user_id}`);
                         } else if (elem.tag === 'img') {
-                            // 图片暂不支持直接显示，转换为标记
                             lineParts.push(`[图片]`);
                         }
                     }
