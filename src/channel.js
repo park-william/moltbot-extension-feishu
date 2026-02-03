@@ -125,13 +125,19 @@ export const feishuPlugin = {
             };
         },
 
-        sendText: async ({ to, text, cfg, accountId }) => {
+        sendText: async ({ to, text, cfg, accountId, messageId }) => {
             const account = resolveAccount(cfg, accountId);
             if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
             
             const provider = new FeishuProvider({ account, log: console });
-            const resp = await provider.sendAuto(to, text);
             
+            // 核心改进：如果存在 messageId，则执行原地更新，否则发送新消息
+            if (messageId) {
+                const resp = await provider.updateCard(messageId, text);
+                return { channel: "feishu", messageId: messageId };
+            }
+            
+            const resp = await provider.sendAuto(to, text);
             return { 
                 channel: "feishu", 
                 messageId: resp?.data?.message_id || Date.now().toString() 

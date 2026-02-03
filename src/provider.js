@@ -213,7 +213,15 @@ export class FeishuProvider {
         return card;
     }
 
-    async sendAuto(chatId, text) {
+    async sendAuto(chatId, text, messageId = null) {
+        // 如果有 messageId，直接尝试原地更新
+        if (messageId) {
+            try {
+                return await this.updateCard(messageId, text);
+            } catch (e) {
+                this.safeLogger.warn(`Failed to update card ${messageId}, falling back to new message: ${e.message}`);
+            }
+        }
         // 检测是否需要使用卡片格式
         if (/[#*`\[\-|]/.test(text) || text.includes('\n')) {
             return this.sendCard(chatId, text);
@@ -221,9 +229,18 @@ export class FeishuProvider {
         return this.sendText(chatId, text);
     }
 
+    getReceiveIdType(id) {
+        if (!id) return 'chat_id';
+        const type = id.startsWith('ou_') ? 'open_id' :
+                     id.startsWith('on_') ? 'union_id' :
+                     id.startsWith('email_') ? 'email' : 'chat_id';
+        this.logger?.info(`[Feishu] Resolve ID type: ${id} -> ${type}`);
+        return type;
+    }
+
     async sendText(chatId, text) {
         return await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
+            params: { receive_id_type: this.getReceiveIdType(chatId) },
             data: {
                 receive_id: chatId,
                 msg_type: 'text',
@@ -243,7 +260,7 @@ export class FeishuProvider {
         const card = this.buildCard(markdown, options);
 
         return await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
+            params: { receive_id_type: this.getReceiveIdType(chatId) },
             data: {
                 receive_id: chatId,
                 msg_type: 'interactive',
@@ -292,7 +309,7 @@ export class FeishuProvider {
         });
         
         return await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
+            params: { receive_id_type: this.getReceiveIdType(chatId) },
             data: {
                 receive_id: chatId,
                 msg_type: 'interactive',
@@ -308,7 +325,9 @@ export class FeishuProvider {
      * @param {object} options - 可选配置 (template, buttons, title)
      */
     async updateCard(messageId, markdown, options = {}) {
-        const card = this.buildCard(markdown, options);
+        // 自动判定模板颜色：如果包含 "✅" 或 "完成" 字样，自动转为绿色
+        const template = (markdown.includes('✅') || markdown.includes('已就绪')) ? "green" : "blue";
+        const card = this.buildCard(markdown, { ...options, template });
 
         return await this.client.im.message.patch({
             path: { message_id: messageId },
@@ -383,7 +402,7 @@ export class FeishuProvider {
     
     async sendImage(chatId, imageKey) {
         return await this.client.im.message.create({ 
-            params: { receive_id_type: 'chat_id' }, 
+            params: { receive_id_type: this.getReceiveIdType(chatId) }, 
             data: { 
                 receive_id: chatId, 
                 msg_type: 'image', 
@@ -394,7 +413,7 @@ export class FeishuProvider {
     
     async sendFile(chatId, fileKey) {
         return await this.client.im.message.create({ 
-            params: { receive_id_type: 'chat_id' }, 
+            params: { receive_id_type: this.getReceiveIdType(chatId) }, 
             data: { 
                 receive_id: chatId, 
                 msg_type: 'file', 
@@ -443,10 +462,19 @@ export class FeishuProvider {
             },
             // 处理卡片按钮回调
             'card.action.trigger': async (data) => {
+                this.logger?.info(`[Feishu] Card action received: ${JSON.stringify(data)}`);
+
                 const { action, operator, token } = data;
-                const chatId = data.open_chat_id;
-                const messageId = data.open_message_id;
-                const actionValue = action?.value?.action;
+                // 尝试从多个位置获取 chat_id (兼容不同版本的事件结构)
+                const chatId = data.open_chat_id || data.context?.open_chat_id || operator?.open_id;
+                const messageId = data.open_message_id || data.context?.open_message_id;
+                // 获取 action value
+                const actionValue = action?.value?.action || JSON.stringify(action?.value || {});
+                
+                if (!chatId) {
+                    this.logger?.error('[Feishu] Failed to resolve chatId from card action', data);
+                    return {};
+                }
                 
                 if (core && core.channel && core.channel.reply) {
                     // 将按钮点击作为用户消息处理
@@ -465,7 +493,11 @@ export class FeishuProvider {
                         dispatcherOptions: {
                             deliver: async (payload) => {
                                 if (payload.text) {
-                                    await this.sendAuto(chatId, payload.text);
+                                    try {
+                                        await this.sendAuto(chatId, payload.text);
+                                    } catch (err) {
+                                        this.logger?.error(`[Feishu] Reply to card action failed: ${err.message}`, err);
+                                    }
                                 }
                             }
                         }
