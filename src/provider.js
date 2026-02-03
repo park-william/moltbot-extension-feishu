@@ -422,6 +422,51 @@ export class FeishuProvider {
         });
     }
     
+    /**
+     * 解析飞书富文本(Post)消息内容为 Markdown
+     */
+    parsePostContent(contentJson) {
+        try {
+            const content = JSON.parse(contentJson);
+            // post 消息结构: { "zh_cn": { "title": "...", "content": [ [ {tag, text...} ] ] } }
+            // 通常使用 content[keys[0]] 获取第一个语言版本
+            const keys = Object.keys(content);
+            if (keys.length === 0) return "";
+            
+            const postBody = content[keys[0]];
+            const lines = [];
+            
+            // 如果有标题，作为第一行 (一级标题)
+            if (postBody.title) {
+                lines.push(`# ${postBody.title}`);
+            }
+            
+            if (Array.isArray(postBody.content)) {
+                for (const paragraph of postBody.content) {
+                    const lineParts = [];
+                    for (const elem of paragraph) {
+                        if (elem.tag === 'text') {
+                            lineParts.push(elem.text);
+                        } else if (elem.tag === 'a') {
+                            lineParts.push(`[${elem.text}](${elem.href})`);
+                        } else if (elem.tag === 'at') {
+                            lineParts.push(`@${elem.user_name || elem.user_id}`);
+                        } else if (elem.tag === 'img') {
+                            // 图片暂不支持直接显示，转换为标记
+                            lineParts.push(`[图片]`);
+                        }
+                    }
+                    lines.push(lineParts.join(''));
+                }
+            }
+            
+            return lines.join('\n');
+        } catch (e) {
+            this.safeLogger.error(`Failed to parse post content: ${e.message}`);
+            return "";
+        }
+    }
+    
     async start() {
         const core = getCoreRuntime();
         this.wsClient = new lark.WSClient({ 
@@ -434,9 +479,18 @@ export class FeishuProvider {
             'im.message.receive_v1': async (data) => {
                 const { message, sender } = data;
                 let contentText = "";
+                
                 if (message.message_type === 'text') {
-                    contentText = JSON.parse(message.content).text;
+                    try {
+                        contentText = JSON.parse(message.content).text;
+                    } catch (e) {
+                        this.safeLogger.error(`Failed to parse text message: ${e.message}`);
+                    }
+                } else if (message.message_type === 'post') {
+                    // 处理富文本消息
+                    contentText = this.parsePostContent(message.content);
                 }
+                
                 const chatId = message.chat_id;
                 
                 if (core && core.channel && core.channel.reply) {
