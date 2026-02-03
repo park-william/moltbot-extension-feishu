@@ -12,7 +12,8 @@ export const feishuPlugin = {
     // Capabilities defined for this channel
     capabilities: {
         chatTypes: ["direct", "group"],
-        media: true, // Enabled media support
+        media: true,
+        interactiveCards: true, // 支持互动卡片
     },
 
     messaging: {
@@ -35,6 +36,9 @@ export const feishuPlugin = {
             currentChannelProvider: "feishu",
             currentThreadTs: context.ReplyToId || undefined,
             hasRepliedRef,
+            // 传递卡片消息ID (如果存在)
+            cardMessageId: context.CardMessageId || undefined,
+            actionValue: context.ActionValue || undefined,
         }),
     },
 
@@ -80,6 +84,47 @@ export const feishuPlugin = {
     outbound: {
         deliveryMode: "direct",
 
+        // 更新卡片消息
+        update: async ({ messageId, text, cfg, accountId, options }) => {
+            const account = resolveAccount(cfg, accountId);
+            const provider = new FeishuProvider({ account, log: console });
+            
+            const resp = await provider.updateCard(messageId, text, options || {});
+            
+            return { 
+                channel: "feishu", 
+                messageId: resp?.data?.message_id || messageId 
+            };
+        },
+
+        // 发送状态卡片 (新增)
+        sendStatusCard: async ({ to, cardConfig, cfg, accountId }) => {
+            const account = resolveAccount(cfg, accountId);
+            if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
+            
+            const provider = new FeishuProvider({ account, log: console });
+            const resp = await provider.sendStatusCard(to, cardConfig);
+            
+            return { 
+                channel: "feishu", 
+                messageId: resp?.data?.message_id || Date.now().toString() 
+            };
+        },
+
+        // 更新状态卡片 (新增)
+        updateStatusCard: async ({ messageId, cardConfig, cfg, accountId }) => {
+            const account = resolveAccount(cfg, accountId);
+            if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
+            
+            const provider = new FeishuProvider({ account, log: console });
+            const resp = await provider.updateStatusCard(messageId, cardConfig);
+            
+            return { 
+                channel: "feishu", 
+                messageId: resp?.data?.message_id || messageId 
+            };
+        },
+
         sendText: async ({ to, text, cfg, accountId }) => {
             const account = resolveAccount(cfg, accountId);
             if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
@@ -93,8 +138,21 @@ export const feishuPlugin = {
             };
         },
 
+        // 发送带按钮的卡片消息 (新增)
+        sendCard: async ({ to, text, buttons, title, template, cfg, accountId }) => {
+            const account = resolveAccount(cfg, accountId);
+            if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
+            
+            const provider = new FeishuProvider({ account, log: console });
+            const resp = await provider.sendCard(to, text, { buttons, title, template });
+            
+            return { 
+                channel: "feishu", 
+                messageId: resp?.data?.message_id || Date.now().toString() 
+            };
+        },
+
         // REQUIRED by Moltbot core: sendMedia handles all media types
-        // ctx.mediaUrl contains the file path, ctx.text contains the caption
         sendMedia: async ({ to, text, mediaUrl, cfg, accountId }) => {
             const account = resolveAccount(cfg, accountId);
             if (!account) throw new Error(`Feishu account "${accountId || 'default'}" not found in config`);
@@ -157,9 +215,7 @@ export const feishuPlugin = {
             const provider = new FeishuProvider({ account, log: console });
             
             // Fallback: Send video as regular file to avoid ownership/cover issues
-            // Upload as generic stream (not 'mp4') to match 'file' message type
             const fileKey = await provider.uploadFile(filePath, 'stream');
-            // Send as file message
             const resp = await provider.sendFile(to, fileKey);
             
             return { channel: "feishu", messageId: resp?.data?.message_id };

@@ -1,12 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
-import { pipeline } from 'node:stream/promises';
 import { getCoreRuntime } from './runtime.js';
-
-// A simple 32x32 gray placeholder icon for video cover (Base64)
-const DEFAULT_VIDEO_COVER_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAxwAAAMcBwhGQBgAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAADdSURBVFiF7ZYxCsMwEEW/x0sI3aO36CE6d+8RMnfv0aF79BAZPILp0iGDOyXjQ6AwsGzL//0QCOvO+ySOIwCAMebcc87lOedLz/N+5RzX1XW963ne/Z8A2F5tG4B1y7Zt3/fc930xDAMYYzEfx/G2KIpig3O+f88B2N7z/d9+v68VRREYY1Ff13U0TROUZRk451F/u92i7/uibduiaZqgbduCcx71nPOl7/uX/BwA2F5tG4B1y7Isy7Isy7Isy7Isy7Isy7Isy7Isy7Isy/8BPM+755zLfd//A3i/AH71Plf62eF6AAAAAElFTkSuQmCC";
 
 export class FeishuProvider {
     constructor(ctx) {
@@ -15,16 +10,13 @@ export class FeishuProvider {
         this.runtime = ctx.runtime;
         this.logger = ctx.log;
         
-        // Extract credentials safely
         this.appId = this.account?.config?.appId;
         this.appSecret = this.account?.config?.appSecret;
         
         if (!this.appId || !this.appSecret) {
-            throw new Error("Feishu provider missing appId or appSecret in account config");
+            throw new Error("Feishu provider missing appId or appSecret");
         }
         
-        // Create a safe logger shim for Lark SDK
-        // Lark SDK may pass objects or multiple args that might confuse strict loggers
         this.safeLogger = {
             debug: (...args) => this.logger?.debug?.(args.map(String).join(' ')) || console.debug(...args),
             info: (...args) => this.logger?.info?.(args.map(String).join(' ')) || console.info(...args),
@@ -41,483 +33,420 @@ export class FeishuProvider {
         this.wsClient = null;
     }
 
-    async downloadResource(messageId, fileKey, type) {
-        try {
-            // Feishu API resource types are 'image' or 'file'. Audio messages use 'file'.
-            const apiType = type === 'audio' ? 'file' : type;
-            
-            const resp = await this.client.im.messageResource.get({
-                path: { message_id: messageId, file_key: fileKey },
-                params: { type: apiType },
-            });
-
-            if (!resp) throw new Error(`Empty response from Feishu for ${type}`);
-
-            const tmpDir = os.tmpdir();
-            const ext = type === 'image' ? 'image' : (type === 'audio' ? 'opus' : 'bin');
-            const filename = `feishu-${messageId}-${fileKey}.${ext}`;
-            const filePath = path.join(tmpDir, filename);
-
-            // Lark SDK v1.x response wrapper handling
-            if (typeof resp.writeFile === 'function') {
-                await resp.writeFile(filePath);
-            } else if (typeof resp.getReadableStream === 'function') {
-                 // Explicit stream getter
-                 const stream = resp.getReadableStream();
-                 if (stream) {
-                    await pipeline(stream, fs.createWriteStream(filePath));
-                 } else {
-                     throw new Error("Feishu response stream was null");
-                 }
-            } else if (Buffer.isBuffer(resp)) {
-                await fs.promises.writeFile(filePath, resp);
-            } else if (typeof resp.pipe === 'function') {
-                await pipeline(resp, fs.createWriteStream(filePath));
-            } else if (resp.data && (Buffer.isBuffer(resp.data) || typeof resp.data.pipe === 'function')) {
-                 if (Buffer.isBuffer(resp.data)) {
-                     await fs.promises.writeFile(filePath, resp.data);
-                 } else {
-                     await pipeline(resp.data, fs.createWriteStream(filePath));
-                 }
-            } else {
-                this.logger?.warn(`Unknown response type for resource download: ${resp.constructor?.name}, keys: ${Object.keys(resp)}`);
-                throw new Error(`Received invalid response type for ${type}`);
-            }
-
-            const mimeType = type === 'image' ? 'image/jpeg' : (type === 'audio' ? 'audio/opus' : 'application/octet-stream');
-            return { path: filePath, type: mimeType }; 
-        } catch (err) {
-            this.logger?.error(`Failed to download ${type} ${fileKey}: ${err.message}`);
-            return null;
-        }
-    }
-
-    async downloadImage(messageId, imageKey) {
-        return this.downloadResource(messageId, imageKey, 'image');
-    }
-
-    async downloadAudio(messageId, fileKey) {
-        return this.downloadResource(messageId, fileKey, 'audio');
-    }
-
-    async start() {
-        const core = getCoreRuntime();
-        const mode = this.account.config.mode || 'websocket';
-        this.logger?.info(`Starting Feishu provider for ${this.appId} in ${mode} mode`);
+    /**
+     * 将 Markdown 表格转换为飞书 <table> 组件格式
+     * 输入: | Col1 | Col2 |\n|---|---|\n| val1 | val2 |
+     * 输出: <table columns=[{"name":"Col1"},{"name":"Col2"}] data=[["val1","val2"]]/>
+     */
+    convertMarkdownTable(tableLines) {
+        if (tableLines.length < 2) return null;
         
-        if (mode === 'webhook') {
-            this.logger?.info("Webhook mode enabled. Ensure public URL is configured in Feishu console.");
-            return;
+        // 解析表头
+        const headerLine = tableLines[0];
+        const headers = headerLine.split('|').filter(x => x.trim()).map(x => x.trim());
+        
+        // 跳过分隔行 (|---|---|)
+        // 解析数据行
+        const dataRows = [];
+        for (let i = 2; i < tableLines.length; i++) {
+            const line = tableLines[i];
+            if (!line.includes('|')) break;
+            const cells = line.split('|').filter(x => x.trim()).map(x => x.trim());
+            if (cells.length > 0) {
+                dataRows.push(cells);
+            }
         }
+        
+        // 构建飞书 table 组件
+        const columns = headers.map(h => ({ name: h }));
+        const columnsJson = JSON.stringify(columns);
+        const dataJson = JSON.stringify(dataRows);
+        
+        return `<table columns=${columnsJson} data=${dataJson}/>`;
+    }
 
-        // WebSocket Mode
-        try {
-            // Re-instantiate WSClient here to ensure clean state on restart
-            this.wsClient = new lark.WSClient({
-                appId: this.appId,
-                appSecret: this.appSecret,
-                logger: this.safeLogger,
-            });
-
-            const dispatcher = new lark.EventDispatcher({}).register({
-                'im.message.receive_v1': async (data) => {
-                    try {
-                        const { message, sender } = data;
-                        
-                        // Debug log for raw message structure
-                        this.logger?.info(`[Feishu] Received ${message.message_type}: ${JSON.stringify(message).slice(0, 500)}`);
-
-                        let contentText = "";
-                        let mediaPath = undefined;
-                        let mediaType = undefined;
-
-                        if (message.message_type === 'text') {
-                            contentText = JSON.parse(message.content).text;
-                            // Replace @mentions placeholders with names if available
-                            if (message.mentions && message.mentions.length > 0) {
-                                try {
-                                    message.mentions.forEach(mention => {
-                                        if (mention.key && mention.name) {
-                                            // Use global replace with escaped key just in case, though replaceAll covers string literal
-                                            // Ensure key is treated as literal string
-                                            contentText = contentText.split(mention.key).join(`@${mention.name}`);
-                                        }
-                                    });
-                                } catch (mentionErr) {
-                                    this.logger?.warn(`Failed to replace mentions: ${mentionErr.message}`);
-                                }
-                            }
-                        } else if (message.message_type === 'post') {
-                            // Handle rich text (post) messages
-                            // Extract plain text from the complex post structure
-                            try {
-                                const content = JSON.parse(message.content);
-                                // content.content is typically [[{tag: "text", text: "..."}]]
-                                // We flatten it to a single string
-                                if (content && content.content) {
-                                    contentText = content.content.map(paragraph => 
-                                        paragraph.map(elem => {
-                                            if (elem.tag === 'text') return elem.text;
-                                            if (elem.tag === 'at') return `@${elem.user_name || 'User'}`;
-                                            if (elem.tag === 'a') return elem.text; // link
-                                            return elem.text || "";
-                                        }).join("")
-                                    ).join("\n");
-                                }
-                                // If title exists, prepend it
-                                if (content.title) {
-                                    contentText = `# ${content.title}\n${contentText}`;
-                                }
-                            } catch (e) {
-                                this.logger?.warn("Failed to parse post content: " + e.message);
-                            }
-                        } else if (message.message_type === 'image') {
-                            try {
-                                const content = JSON.parse(message.content);
-                                const imageKey = content.image_key;
-                                if (imageKey) {
-                                    const downloaded = await this.downloadImage(message.message_id, imageKey);
-                                    if (downloaded) {
-                                        mediaPath = downloaded.path;
-                                        mediaType = downloaded.type;
-                                        contentText = "<media:image>";
-                                    }
-                                }
-                            } catch (e) {
-                                this.logger?.warn("Failed to process image message: " + e.message);
-                            }
-                        } else if (message.message_type === 'audio') {
-                            try {
-                                const content = JSON.parse(message.content);
-                                const fileKey = content.file_key;
-                                if (fileKey) {
-                                    const downloaded = await this.downloadAudio(message.message_id, fileKey);
-                                    if (downloaded) {
-                                        mediaPath = downloaded.path;
-                                        mediaType = downloaded.type;
-                                        contentText = "<media:audio>";
-                                    }
-                                }
-                            } catch (e) {
-                                this.logger?.warn("Failed to process audio message: " + e.message);
-                            }
-                        }
-
-                        if (!contentText && !mediaPath) {
-                            // Silently ignore other types or empty parses
-                            this.logger?.debug?.(`Ignored message type: ${message.message_type}`);
-                            return;
-                        }
-
-                        const senderId = sender.sender_id?.user_id || sender.sender_id?.open_id;
-                        const chatId = message.chat_id;
-
-                        if (!senderId) {
-                            this.logger?.warn("Received Feishu message without valid sender_id");
-                            return;
-                        }
-
-                        // Use simple reply context if core runtime is not fully available or differs
-                        // Standard Moltbot Channel Payload
-                        // IMPORTANT: 'To' should be the chat_id, not appId, so that message tool can auto-infer target
-                        // IMPORTANT: 'Provider' is required for buildThreadingToolContext to identify the channel
-                        const ctxPayload = {
-                            Body: contentText,
-                            From: senderId,
-                            To: chatId,  // Changed from this.appId to chatId for proper target inference
-                            SessionKey: 'feishu:' + chatId,
-                            AccountId: this.ctx.accountId || 'default',
-                            MessageSid: message.message_id,
-                            // These fields are critical for message tool to auto-infer target
-                            Provider: 'feishu',
-                            Surface: 'feishu',
-                            OriginatingChannel: 'feishu',
-                            OriginatingTo: chatId,
-                            ChatType: message.chat_type === 'group' ? 'group' : 'direct',
-                            // Media fields
-                            MediaPath: mediaPath,
-                            MediaType: mediaType,
-                            MediaMimeType: mediaType,
-                        };
-                        
-                        // Dispatch via standard reply interface
-                        if (core && core.channel && core.channel.reply) {
-                            // Do not await the full processing chain. 
-                            // Return ACK to Feishu immediately to prevent timeout.
-                            core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-                                ctx: ctxPayload,
-                                cfg: this.ctx.cfg,
-                                dispatcherOptions: {
-                                    deliver: async (payload) => {
-                                        this.logger?.info(`[Feishu] Core dispatch deliver payload: ${JSON.stringify(payload)}`);
-                                        
-                                        // Handle Media (Video/Image/File)
-                                        let mediaFile = payload.mediaUrl || (payload.mediaUrls && payload.mediaUrls[0]);
-                                        let textToSend = payload.text || '';
-                                        
-                                        // NEW: Extract media paths from markdown syntax if no explicit mediaUrl
-                                        // Matches: ![alt](path) or just bare file paths starting with /
-                                        if (!mediaFile && textToSend) {
-                                            // Pattern 1: Markdown image/file syntax ![...](path)
-                                            const mdMatch = textToSend.match(/!\[[^\]]*\]\(([^)]+)\)/);
-                                            if (mdMatch && mdMatch[1]) {
-                                                const extractedPath = mdMatch[1];
-                                                // Verify it looks like a file path (starts with / or ./)
-                                                if (extractedPath.startsWith('/') || extractedPath.startsWith('./')) {
-                                                    mediaFile = extractedPath;
-                                                    // Remove the markdown syntax from text
-                                                    textToSend = textToSend.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim();
-                                                    this.logger?.info(`[Feishu] Extracted media from markdown: ${mediaFile}`);
-                                                }
-                                            }
-                                            
-                                            // Pattern 2: MEDIA: prefix (common Moltbot format)
-                                            const mediaMatch = textToSend.match(/MEDIA:\s*(\S+)/i);
-                                            if (!mediaFile && mediaMatch && mediaMatch[1]) {
-                                                mediaFile = mediaMatch[1];
-                                                textToSend = textToSend.replace(/MEDIA:\s*\S+/gi, '').trim();
-                                                this.logger?.info(`[Feishu] Extracted media from MEDIA: tag: ${mediaFile}`);
-                                            }
-                                        }
-                                        
-                                        if (mediaFile) {
-                                            try {
-                                                const lower = mediaFile.toLowerCase();
-                                                this.logger?.info(`[Feishu] Processing media file: ${mediaFile}`);
-
-                                                if (/\.(jpg|jpeg|png|gif|webp|bmp)$/.test(lower)) {
-                                                    // Images
-                                                    const imageKey = await this.uploadImage(mediaFile);
-                                                    await this.sendImage(chatId, imageKey);
-                                                } else {
-                                                    // Everything else (Videos, Files, PDFs) -> Send as File attachment
-                                                    // IMPORTANT: To send as msg_type='file', we MUST upload as file_type='stream'.
-                                                    // If we upload as 'mp4', Feishu expects msg_type='media' and requires a cover image.
-                                                    // By forcing 'stream', we bypass the strict video validation and just send the raw file.
-                                                    const fileType = 'stream';
-                                                    const fileKey = await this.uploadFile(mediaFile, fileType);
-                                                    await this.sendFile(chatId, fileKey);
-                                                }
-                                            } catch (e) {
-                                                this.logger?.error(`[Feishu] Failed to send media: ${e.message}`);
-                                            }
-                                        }
-
-                                        // Handle Text (only if present after extraction)
-                                        if (textToSend && textToSend.trim()) {
-                                            await this.sendAuto(chatId, textToSend);
-                                        }
-                                    }
-                                }
-                            }).catch(err => {
-                                this.logger?.error("Feishu async dispatch failed: " + String(err));
-                            });
-                            
-                            // Return success to SDK immediately
-                            return {};
-                        } else {
-                            this.logger?.error("Feishu: Core runtime channel reply system not found");
-                        }
-                    } catch (err) {
-                        this.logger?.error("Feishu message dispatch failed: " + String(err));
+    /**
+     * 将 Markdown 转换为飞书支持的格式
+     * - 修复标题格式 (飞书只支持 # 和 ##)
+     * - 转换表格为 <table> 组件
+     */
+    convertMarkdownForFeishu(markdown) {
+        const lines = markdown.split('\n');
+        const result = [];
+        let i = 0;
+        
+        while (i < lines.length) {
+            const line = lines[i];
+            const trimmed = line.trim();
+            
+            // 检测 Markdown 表格
+            if (trimmed.startsWith('|') && i + 1 < lines.length) {
+                const nextLine = lines[i + 1]?.trim() || '';
+                // 检查是否是表格分隔行 (|---|---|)
+                if (nextLine.match(/^\|[\s\-:]+\|/)) {
+                    // 收集整个表格
+                    const tableLines = [trimmed];
+                    i++;
+                    while (i < lines.length && lines[i].trim().startsWith('|')) {
+                        tableLines.push(lines[i].trim());
+                        i++;
                     }
+                    
+                    // 转换表格
+                    const tableComponent = this.convertMarkdownTable(tableLines);
+                    if (tableComponent) {
+                        result.push(tableComponent);
+                    } else {
+                        // 转换失败，保留原始内容
+                        result.push(...tableLines);
+                    }
+                    continue;
                 }
-            });
-
-            await this.wsClient.start({ eventDispatcher: dispatcher });
-            this.logger?.info("Feishu WebSocket connected successfully");
-
-        } catch (err) {
-            this.logger?.error("Failed to start Feishu WebSocket: " + String(err));
-            throw err;
+            }
+            
+            // 处理标题 (### 及以上降级为 ##，因为飞书只支持 # 和 ##)
+            if (trimmed.startsWith('###')) {
+                // ### 及更多 # 降级为 ## (飞书最多支持二级标题)
+                const content = trimmed.replace(/^#{3,}\s*/, '');
+                result.push(`## ${content}`);
+                i++;
+                continue;
+            }
+            
+            // 普通行直接保留
+            result.push(line);
+            i++;
         }
+        
+        return result.join('\n');
+    }
 
-        // Handle shutdown
-        this.ctx.abortSignal?.addEventListener('abort', () => {
-            this.logger?.info("Shutting down Feishu WebSocket...");
-            this.wsClient = null;
-        });
+    /**
+     * 构建飞书消息卡片
+     * @param {string} markdown - Markdown 内容
+     * @param {object} options - 可选配置
+     * @param {string} options.template - 卡片头部颜色模板
+     * @param {string} options.cardId - 卡片唯一ID (用于更新)
+     * @param {array} options.buttons - 按钮配置 [{text, value, type}]
+     */
+    buildCard(markdown, options = {}) {
+        let title = options.title || "";
+        let content = markdown;
+        
+        // 提取标题 (如果以 # 开头)
+        if (markdown.startsWith("# ")) {
+            const lines = markdown.split("\n");
+            title = lines[0].replace("# ", "").trim();
+            content = lines.slice(1).join("\n").trim();
+        }
+        
+        // 转换 Markdown 为飞书格式
+        const convertedContent = this.convertMarkdownForFeishu(content);
+        
+        const elements = [
+            { tag: "markdown", content: convertedContent }
+        ];
+        
+        // 添加按钮 (如果有)
+        if (options.buttons && options.buttons.length > 0) {
+            const actions = options.buttons.map(btn => ({
+                tag: "button",
+                text: { tag: "plain_text", content: btn.text },
+                type: btn.type || "default", // primary, danger, default
+                value: { action: btn.value || btn.text }
+            }));
+            
+            elements.push({
+                tag: "action",
+                actions: actions
+            });
+        }
+        
+        const card = {
+            config: { 
+                wide_screen_mode: true, 
+                update_multi: true // 允许多次更新
+            },
+            header: title ? {
+                title: { tag: "plain_text", content: title },
+                template: options.template || "blue"
+            } : undefined,
+            elements: elements
+        };
+        
+        // 如果没有标题，移除 header
+        if (!title) {
+            delete card.header;
+        }
+        
+        return card;
     }
 
     async sendAuto(chatId, text) {
-        // Heuristic to detect if we should use a card for markdown
-        // We use cards if the text contains markdown syntax or multiple lines
-        const isMarkdown = /[#*`\[\-]/.test(text) || text.includes('\n');
-        
-        if (isMarkdown) {
+        // 检测是否需要使用卡片格式
+        if (/[#*`\[\-|]/.test(text) || text.includes('\n')) {
             return this.sendCard(chatId, text);
-        } else {
-            return this.sendText(chatId, text);
         }
+        return this.sendText(chatId, text);
     }
 
     async sendText(chatId, text) {
-        try {
-            this.logger?.info(`[Feishu] Sending text to ${chatId}: ${text.slice(0, 100)}...`);
-            const resp = await this.client.im.message.create({
-                params: { receive_id_type: 'chat_id' },
-                data: {
-                    receive_id: chatId,
-                    msg_type: 'text',
-                    content: JSON.stringify({ text }),
-                },
-            });
-            this.logger?.info(`[Feishu] Send response: ${JSON.stringify(resp)}`);
-            return resp;
-        } catch (err) {
-            this.logger?.error(`Failed to send text to ${chatId}: ${err.message}`, err);
-            throw err;
-        }
+        return await this.client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: {
+                receive_id: chatId,
+                msg_type: 'text',
+                content: JSON.stringify({ text }),
+            },
+        });
     }
 
-    async sendCard(chatId, markdown) {
-        try {
-            this.logger?.info(`[Feishu] Sending card to ${chatId}: ${markdown.slice(0, 100)}...`);
-            
-            // Precise Schema 2.0 structure as confirmed by user testing
-            const cardContent = {
-                schema: "2.0",
-                header: {
-                    title: {
-                        tag: "plain_text",
-                        content: "小林"
-                    },
-                    template: "blue"
-                },
-                body: {
-                    elements: [
-                        {
-                            tag: "markdown",
-                            content: markdown
-                        }
-                    ]
-                }
-            };
+    /**
+     * 发送消息卡片
+     * @param {string} chatId - 聊天 ID
+     * @param {string} markdown - Markdown 内容
+     * @param {object} options - 可选配置 (template, buttons, title)
+     * @returns {object} - 包含 message_id 的响应
+     */
+    async sendCard(chatId, markdown, options = {}) {
+        const card = this.buildCard(markdown, options);
 
-            const resp = await this.client.im.message.create({
-                params: { receive_id_type: 'chat_id' },
-                data: {
-                    receive_id: chatId,
-                    msg_type: 'interactive',
-                    content: JSON.stringify(cardContent),
-                },
-            });
-            this.logger?.info(`[Feishu] Card send response: ${JSON.stringify(resp)}`);
-            return resp;
-        } catch (err) {
-            this.logger?.error(`Failed to send card to ${chatId}: ${err.message}`, err);
-            throw err;
-        }
+        return await this.client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: {
+                receive_id: chatId,
+                msg_type: 'interactive',
+                content: JSON.stringify(card),
+            },
+        });
     }
 
+    /**
+     * 发送带状态的互动卡片 (支持后续更新)
+     * @param {string} chatId - 聊天 ID
+     * @param {object} cardConfig - 卡片配置
+     * @param {string} cardConfig.title - 卡片标题
+     * @param {string} cardConfig.content - Markdown 内容
+     * @param {string} cardConfig.status - 状态: pending, running, success, error
+     * @param {array} cardConfig.buttons - 按钮配置
+     * @returns {object} - 包含 message_id 的响应
+     */
+    async sendStatusCard(chatId, cardConfig) {
+        const statusTemplates = {
+            pending: "grey",
+            running: "blue", 
+            success: "green",
+            error: "red",
+            warning: "orange"
+        };
+        
+        const statusIcons = {
+            pending: "⏳",
+            running: "🔄",
+            success: "✅",
+            error: "❌",
+            warning: "⚠️"
+        };
+        
+        const status = cardConfig.status || "pending";
+        const template = statusTemplates[status] || "blue";
+        const icon = statusIcons[status] || "";
+        
+        const title = cardConfig.title ? `${icon} ${cardConfig.title}` : "";
+        
+        const card = this.buildCard(cardConfig.content || "", {
+            title: title,
+            template: template,
+            buttons: cardConfig.buttons
+        });
+        
+        return await this.client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: {
+                receive_id: chatId,
+                msg_type: 'interactive',
+                content: JSON.stringify(card),
+            },
+        });
+    }
+
+    /**
+     * 更新已发送的卡片消息
+     * @param {string} messageId - 要更新的消息 ID
+     * @param {string} markdown - 新的 Markdown 内容
+     * @param {object} options - 可选配置 (template, buttons, title)
+     */
+    async updateCard(messageId, markdown, options = {}) {
+        const card = this.buildCard(markdown, options);
+
+        return await this.client.im.message.patch({
+            path: { message_id: messageId },
+            data: {
+                content: JSON.stringify(card),
+            },
+        });
+    }
+
+    /**
+     * 更新状态卡片
+     * @param {string} messageId - 要更新的消息 ID
+     * @param {object} cardConfig - 新的卡片配置
+     */
+    async updateStatusCard(messageId, cardConfig) {
+        const statusTemplates = {
+            pending: "grey",
+            running: "blue",
+            success: "green", 
+            error: "red",
+            warning: "orange"
+        };
+        
+        const statusIcons = {
+            pending: "⏳",
+            running: "🔄",
+            success: "✅",
+            error: "❌",
+            warning: "⚠️"
+        };
+        
+        const status = cardConfig.status || "success";
+        const template = statusTemplates[status] || "green";
+        const icon = statusIcons[status] || "";
+        
+        const title = cardConfig.title ? `${icon} ${cardConfig.title}` : "";
+        
+        const card = this.buildCard(cardConfig.content || "", {
+            title: title,
+            template: template,
+            buttons: cardConfig.buttons
+        });
+        
+        return await this.client.im.message.patch({
+            path: { message_id: messageId },
+            data: {
+                content: JSON.stringify(card),
+            },
+        });
+    }
+
+    // 媒体上传和发送方法
     async uploadImage(filePath) {
-        try {
-            const fileStream = fs.createReadStream(filePath);
-            const resp = await this.client.im.image.create({
-                data: {
-                    image_type: 'message',
-                    image: fileStream,
-                }
-            });
-            return resp.image_key;
-        } catch (err) {
-            this.logger?.error(`Failed to upload image ${filePath}: ${err.message}`);
-            throw err;
-        }
+        const fileStream = fs.createReadStream(filePath);
+        const resp = await this.client.im.image.create({ 
+            data: { image_type: 'message', image: fileStream } 
+        });
+        return resp.image_key;
     }
-
+    
     async uploadFile(filePath, fileType = 'stream') {
-        try {
-            const fileName = path.basename(filePath);
-            
-            // Debug: Check file stats
-            try {
-                const stats = fs.statSync(filePath);
-                this.logger?.info(`[Feishu] Uploading file: ${filePath} (Size: ${stats.size} bytes)`);
-            } catch (e) {
-                this.logger?.error(`[Feishu] File stat failed for ${filePath}: ${e.message}`);
-                throw e;
-            }
-
-            const fileStream = fs.createReadStream(filePath);
-            
-            const startTime = Date.now();
-            const resp = await this.client.im.file.create({
-                data: {
-                    file_type: fileType,
-                    file_name: fileName,
-                    duration: 3000,
-                    file: fileStream,
-                }
-            });
-            
-            const duration = Date.now() - startTime;
-            this.logger?.info(`[Feishu] Upload success! Key: ${resp.file_key}, Time: ${duration}ms`);
-            
-            return resp.file_key;
-        } catch (err) {
-            this.logger?.error(`[Feishu] Failed to upload file ${filePath}: ${err.message}`, err.response ? err.response.data : '');
-            throw err;
-        }
+        const fileStream = fs.createReadStream(filePath);
+        const resp = await this.client.im.file.create({ 
+            data: { 
+                file_type: fileType, 
+                file_name: path.basename(filePath), 
+                file: fileStream 
+            } 
+        });
+        return resp.file_key;
     }
-
+    
     async sendImage(chatId, imageKey) {
-        return await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: {
-                receive_id: chatId,
-                msg_type: 'image',
-                content: JSON.stringify({ image_key: imageKey }),
-            },
+        return await this.client.im.message.create({ 
+            params: { receive_id_type: 'chat_id' }, 
+            data: { 
+                receive_id: chatId, 
+                msg_type: 'image', 
+                content: JSON.stringify({ image_key: imageKey }) 
+            } 
         });
     }
-
+    
     async sendFile(chatId, fileKey) {
-        return await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: {
-                receive_id: chatId,
-                msg_type: 'file',
-                content: JSON.stringify({ file_key: fileKey }),
-            },
+        return await this.client.im.message.create({ 
+            params: { receive_id_type: 'chat_id' }, 
+            data: { 
+                receive_id: chatId, 
+                msg_type: 'file', 
+                content: JSON.stringify({ file_key: fileKey }) 
+            } 
         });
     }
-
-    async sendVideo(chatId, fileKey, imageKey) {
-        // If no cover image provided, try to upload the default one
-        if (!imageKey) {
-            try {
-                const imgBuffer = Buffer.from(DEFAULT_VIDEO_COVER_BASE64, 'base64');
-                const tempCoverPath = path.join(os.tmpdir(), `feishu-cover-${Date.now()}.png`);
-                await fs.promises.writeFile(tempCoverPath, imgBuffer);
-                
-                imageKey = await this.uploadImage(tempCoverPath);
-                
-                fs.unlink(tempCoverPath, () => {}); 
-            } catch (e) {
-                this.logger?.warn("Failed to upload default video cover: " + e.message);
-                // Fallback: If cover upload fails, send as regular file instead of media card
-                // Feishu requires image_key for media messages.
-                this.logger?.info("Falling back to sending video as file attachment.");
-                return this.sendFile(chatId, fileKey);
-            }
-        }
-
-        // Double check: if we still don't have an imageKey, send as file
-        if (!imageKey) {
-             return this.sendFile(chatId, fileKey);
-        }
-
-        return await this.client.im.message.create({
-            params: { receive_id_type: 'chat_id' },
-            data: {
-                receive_id: chatId,
-                msg_type: 'media',
-                content: JSON.stringify({ 
-                    file_key: fileKey,
-                    image_key: imageKey
-                }),
-            },
+    
+    async start() {
+        const core = getCoreRuntime();
+        this.wsClient = new lark.WSClient({ 
+            appId: this.appId, 
+            appSecret: this.appSecret, 
+            logger: this.safeLogger 
         });
+        
+        const dispatcher = new lark.EventDispatcher({}).register({
+            'im.message.receive_v1': async (data) => {
+                const { message, sender } = data;
+                let contentText = "";
+                if (message.message_type === 'text') {
+                    contentText = JSON.parse(message.content).text;
+                }
+                const chatId = message.chat_id;
+                
+                if (core && core.channel && core.channel.reply) {
+                    core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+                        ctx: { 
+                            Body: contentText, 
+                            From: sender.sender_id.open_id, 
+                            To: chatId, 
+                            SessionKey: 'feishu:' + chatId, 
+                            Provider: 'feishu' 
+                        },
+                        cfg: this.ctx.cfg,
+                        dispatcherOptions: {
+                            deliver: async (payload) => {
+                                if (payload.text) {
+                                    await this.sendAuto(chatId, payload.text);
+                                }
+                            }
+                        }
+                    });
+                }
+                return {};
+            },
+            // 处理卡片按钮回调
+            'card.action.trigger': async (data) => {
+                const { action, operator, token } = data;
+                const chatId = data.open_chat_id;
+                const messageId = data.open_message_id;
+                const actionValue = action?.value?.action;
+                
+                if (core && core.channel && core.channel.reply) {
+                    // 将按钮点击作为用户消息处理
+                    const buttonMessage = `[Button Clicked] ${actionValue}`;
+                    core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+                        ctx: { 
+                            Body: buttonMessage, 
+                            From: operator.open_id, 
+                            To: chatId, 
+                            SessionKey: 'feishu:' + chatId, 
+                            Provider: 'feishu',
+                            // 传递消息ID以便Agent可以更新卡片
+                            CardMessageId: messageId,
+                            ActionValue: actionValue
+                        },
+                        cfg: this.ctx.cfg,
+                        dispatcherOptions: {
+                            deliver: async (payload) => {
+                                if (payload.text) {
+                                    await this.sendAuto(chatId, payload.text);
+                                }
+                            }
+                        }
+                    });
+                }
+                
+                // 返回空对象表示不更新卡片 (由Agent决定是否更新)
+                return {};
+            }
+        });
+        
+        await this.wsClient.start({ eventDispatcher: dispatcher });
     }
 }
