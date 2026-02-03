@@ -430,12 +430,18 @@ export class FeishuProvider {
             // 兼容 content 已经是对象的情况
             const content = typeof contentJson === 'string' ? JSON.parse(contentJson) : contentJson;
             
-            const keys = Object.keys(content);
-            if (keys.length === 0) return "";
+            let postBody = content;
+            // 如果顶层没有 content 字段，尝试解包语言键 (例如 "zh_cn")
+            if (!postBody.content) {
+                const keys = Object.keys(content);
+                if (keys.length > 0 && content[keys[0]]?.content) {
+                    postBody = content[keys[0]];
+                }
+            }
             
-            const postBody = content[keys[0]];
+            if (!postBody.content) return "";
+
             const lines = [];
-            
             if (postBody.title) {
                 lines.push(`# ${postBody.title}`);
             }
@@ -444,15 +450,25 @@ export class FeishuProvider {
                 for (const paragraph of postBody.content) {
                     const lineParts = [];
                     for (const elem of paragraph) {
+                        let text = "";
                         if (elem.tag === 'text') {
-                            lineParts.push(elem.text);
+                            text = elem.text;
+                            // 处理样式
+                            if (elem.style) {
+                                if (elem.style.includes('bold')) text = `**${text}**`;
+                                if (elem.style.includes('italic')) text = `*${text}*`;
+                                if (elem.style.includes('strike_through')) text = `~~${text}~~`;
+                            }
                         } else if (elem.tag === 'a') {
-                            lineParts.push(`[${elem.text}](${elem.href})`);
+                            text = `[${elem.text}](${elem.href})`;
                         } else if (elem.tag === 'at') {
-                            lineParts.push(`@${elem.user_name || elem.user_id}`);
+                            text = `@${elem.user_name || elem.user_id}`;
                         } else if (elem.tag === 'img') {
-                            lineParts.push(`[图片]`);
+                            text = `[图片]`;
+                        } else if (elem.tag === 'media') {
+                            text = `[视频]`;
                         }
+                        lineParts.push(text);
                     }
                     lines.push(lineParts.join(''));
                 }
@@ -477,7 +493,7 @@ export class FeishuProvider {
             'im.message.receive_v1': async (data) => {
                 const { message, sender } = data;
                 let contentText = "";
-                
+
                 if (message.message_type === 'text') {
                     try {
                         contentText = JSON.parse(message.content).text;
@@ -487,6 +503,24 @@ export class FeishuProvider {
                 } else if (message.message_type === 'post') {
                     // 处理富文本消息
                     contentText = this.parsePostContent(message.content);
+                } else if (message.message_type === 'image') {
+                    // 处理图片消息
+                    contentText = "[用户发送了一张图片]";
+                } else if (message.message_type === 'file') {
+                    // 处理文件消息
+                    contentText = "[用户发送了一个文件]";
+                } else if (message.message_type === 'audio') {
+                    // 处理音频消息
+                    contentText = "[用户发送了一段语音]";
+                } else if (message.message_type === 'video') {
+                    // 处理视频消息
+                    contentText = "[用户发送了一段视频]";
+                } else if (message.message_type === 'sticker') {
+                    // 处理表情消息
+                    contentText = "[用户发送了一个表情]";
+                } else {
+                    // 未知类型，尝试提供信息
+                    contentText = `[用户发送了 ${message.message_type} 类型消息]`;
                 }
                 
                 const chatId = message.chat_id;
