@@ -34,46 +34,81 @@ export class FeishuProvider {
     }
 
     /**
-     * 将 Markdown 表格转换为飞书 <table> 组件格式
-     * 输入: | Col1 | Col2 |\n|---|---|\n| val1 | val2 |
-     * 输出: <table columns=[{"name":"Col1"},{"name":"Col2"}] data=[["val1","val2"]]/>
+     * 解析 Markdown 表格并返回飞书表格组件
+     * @param {string[]} tableLines - 表格行数组
+     * @returns {object|null} 飞书 table 元素
      */
-    convertMarkdownTable(tableLines) {
+    parseMarkdownTableToElement(tableLines) {
         if (tableLines.length < 2) return null;
         
         // 解析表头
         const headerLine = tableLines[0];
         const headers = headerLine.split('|').filter(x => x.trim()).map(x => x.trim());
         
-        // 跳过分隔行 (|---|---|)
-        // 解析数据行
-        const dataRows = [];
+        if (headers.length === 0) return null;
+        
+        // 生成列名 (col_0, col_1, ...)
+        const columns = headers.map((h, idx) => ({
+            name: `col_${idx}`,
+            display_name: h,
+            width: "auto"
+        }));
+        
+        // 跳过分隔行，解析数据行
+        const rows = [];
         for (let i = 2; i < tableLines.length; i++) {
             const line = tableLines[i];
             if (!line.includes('|')) break;
             const cells = line.split('|').filter(x => x.trim()).map(x => x.trim());
             if (cells.length > 0) {
-                dataRows.push(cells);
+                const row = {};
+                cells.forEach((cell, idx) => {
+                    if (idx < columns.length) {
+                        row[`col_${idx}`] = cell;
+                    }
+                });
+                rows.push(row);
             }
         }
         
-        // 构建飞书 table 组件
-        const columns = headers.map(h => ({ name: h }));
-        const columnsJson = JSON.stringify(columns);
-        const dataJson = JSON.stringify(dataRows);
-        
-        return `<table columns=${columnsJson} data=${dataJson}/>`;
+        return {
+            tag: "table",
+            page_size: Math.min(rows.length, 10),
+            row_height: "low",
+            header_style: { 
+                bold: true,
+                background_style: "grey"
+            },
+            columns: columns,
+            rows: rows
+        };
     }
 
     /**
-     * 将 Markdown 转换为飞书支持的格式
-     * - 修复标题格式 (飞书只支持 # 和 ##)
-     * - 转换表格为 <table> 组件
+     * 将 Markdown 解析为飞书卡片元素数组
+     * - 表格转换为独立的 table 元素
+     * - 文本内容转换为 markdown 元素
+     * - 标题会被正确处理
+     * @param {string} markdown 
+     * @returns {object[]} 飞书卡片元素数组
      */
-    convertMarkdownForFeishu(markdown) {
+    parseMarkdownToElements(markdown) {
         const lines = markdown.split('\n');
-        const result = [];
+        const elements = [];
+        let currentTextLines = [];
         let i = 0;
+        
+        const flushText = () => {
+            if (currentTextLines.length > 0) {
+                let text = currentTextLines.join('\n').trim();
+                if (text) {
+                    // 处理标题降级：### 及以上降为 ##
+                    text = text.replace(/^#{3,}\s+/gm, '## ');
+                    elements.push({ tag: "markdown", content: text });
+                }
+                currentTextLines = [];
+            }
+        };
         
         while (i < lines.length) {
             const line = lines[i];
@@ -83,7 +118,10 @@ export class FeishuProvider {
             if (trimmed.startsWith('|') && i + 1 < lines.length) {
                 const nextLine = lines[i + 1]?.trim() || '';
                 // 检查是否是表格分隔行 (|---|---|)
-                if (nextLine.match(/^\|[\s\-:]+\|/)) {
+                if (nextLine.match(/^\|[\s\-:|]+\|/)) {
+                    // 先输出之前累积的文本
+                    flushText();
+                    
                     // 收集整个表格
                     const tableLines = [trimmed];
                     i++;
@@ -92,33 +130,27 @@ export class FeishuProvider {
                         i++;
                     }
                     
-                    // 转换表格
-                    const tableComponent = this.convertMarkdownTable(tableLines);
-                    if (tableComponent) {
-                        result.push(tableComponent);
+                    // 转换表格为飞书元素
+                    const tableElement = this.parseMarkdownTableToElement(tableLines);
+                    if (tableElement) {
+                        elements.push(tableElement);
                     } else {
-                        // 转换失败，保留原始内容
-                        result.push(...tableLines);
+                        // 转换失败，保留原始文本
+                        currentTextLines.push(...tableLines);
                     }
                     continue;
                 }
             }
             
-            // 处理标题 (### 及以上降级为 ##，因为飞书只支持 # 和 ##)
-            if (trimmed.startsWith('###')) {
-                // ### 及更多 # 降级为 ## (飞书最多支持二级标题)
-                const content = trimmed.replace(/^#{3,}\s*/, '');
-                result.push(`## ${content}`);
-                i++;
-                continue;
-            }
-            
-            // 普通行直接保留
-            result.push(line);
+            // 普通行
+            currentTextLines.push(line);
             i++;
         }
         
-        return result.join('\n');
+        // 输出剩余文本
+        flushText();
+        
+        return elements;
     }
 
     /**
@@ -126,7 +158,7 @@ export class FeishuProvider {
      * @param {string} markdown - Markdown 内容
      * @param {object} options - 可选配置
      * @param {string} options.template - 卡片头部颜色模板
-     * @param {string} options.cardId - 卡片唯一ID (用于更新)
+     * @param {string} options.title - 卡片标题
      * @param {array} options.buttons - 按钮配置 [{text, value, type}]
      */
     buildCard(markdown, options = {}) {
@@ -140,12 +172,8 @@ export class FeishuProvider {
             content = lines.slice(1).join("\n").trim();
         }
         
-        // 转换 Markdown 为飞书格式
-        const convertedContent = this.convertMarkdownForFeishu(content);
-        
-        const elements = [
-            { tag: "markdown", content: convertedContent }
-        ];
+        // 解析 Markdown 为飞书元素数组
+        const elements = this.parseMarkdownToElements(content);
         
         // 添加按钮 (如果有)
         if (options.buttons && options.buttons.length > 0) {
@@ -163,15 +191,18 @@ export class FeishuProvider {
         }
         
         const card = {
+            schema: "2.0",
             config: { 
                 wide_screen_mode: true, 
-                update_multi: true // 允许多次更新
+                update_multi: true
             },
             header: title ? {
                 title: { tag: "plain_text", content: title },
                 template: options.template || "blue"
             } : undefined,
-            elements: elements
+            body: {
+                elements: elements
+            }
         };
         
         // 如果没有标题，移除 header
@@ -427,7 +458,6 @@ export class FeishuProvider {
                             To: chatId, 
                             SessionKey: 'feishu:' + chatId, 
                             Provider: 'feishu',
-                            // 传递消息ID以便Agent可以更新卡片
                             CardMessageId: messageId,
                             ActionValue: actionValue
                         },
@@ -442,7 +472,6 @@ export class FeishuProvider {
                     });
                 }
                 
-                // 返回空对象表示不更新卡片 (由Agent决定是否更新)
                 return {};
             }
         });
