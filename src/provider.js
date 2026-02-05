@@ -24,7 +24,7 @@ export class FeishuProvider {
             error: (...args) => this.logger?.error?.(args.map(String).join(' ')) || console.error(...args),
         };
         
-        this.safeLogger.info('[Feishu] Provider loaded v4 - Fix Applied');
+        this.safeLogger.info('[Feishu] Provider loaded v5 - Full Restore');
 
         this.client = new lark.Client({
             appId: this.appId,
@@ -178,7 +178,9 @@ export class FeishuProvider {
         const elements = this.parseMarkdownToElements(content);
         
         // 添加按钮 (如果有)
+        let hasButtons = false;
         if (options.buttons && options.buttons.length > 0) {
+            hasButtons = true;
             const actions = options.buttons.map(btn => ({
                 tag: "button",
                 text: { tag: "plain_text", content: btn.text },
@@ -192,8 +194,14 @@ export class FeishuProvider {
             });
         }
         
+        // 混合 Schema 策略：
+        // V2: 支持更好的 Markdown 渲染（标题），但不通过 tag:action 支持按钮（需降级）
+        // V1: 支持 tag:action 按钮，但 Markdown 渲染较弱
+        // 策略：有按钮时降级到 V1，无按钮时使用 V2
+        const useSchemaV2 = !hasButtons;
+
         const card = {
-            // schema: "2.0", // 降级到 V1 以支持 action module
+            schema: useSchemaV2 ? "2.0" : undefined,
             config: { 
                 wide_screen_mode: true, 
                 update_multi: true
@@ -201,9 +209,14 @@ export class FeishuProvider {
             header: title ? {
                 title: { tag: "plain_text", content: title },
                 template: options.template || "blue"
-            } : undefined,
-            elements: elements // V1: elements 在顶层
+            } : undefined
         };
+        
+        if (useSchemaV2) {
+            card.body = { elements: elements };
+        } else {
+            card.elements = elements;
+        }
         
         // 如果没有标题，移除 header
         if (!title) {

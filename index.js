@@ -10,7 +10,7 @@ const extension = {
   description: "Native Feishu channel integration",
   
   register(api) {
-    // Force reload timestamp: 2026-02-05-v9 (Fix Button Schema)
+    // Force reload timestamp: 2026-02-05-v14 (Hybrid Schema Strategy)
     // Store runtime in our dedicated module to avoid circular dependency
     setCoreRuntime(api.runtime);
     
