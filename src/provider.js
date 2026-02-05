@@ -23,6 +23,8 @@ export class FeishuProvider {
             warn: (...args) => this.logger?.warn?.(args.map(String).join(' ')) || console.warn(...args),
             error: (...args) => this.logger?.error?.(args.map(String).join(' ')) || console.error(...args),
         };
+        
+        this.safeLogger.info('[Feishu] Provider loaded v4 - Fix Applied');
 
         this.client = new lark.Client({
             appId: this.appId,
@@ -191,7 +193,7 @@ export class FeishuProvider {
         }
         
         const card = {
-            schema: "2.0",
+            // schema: "2.0", // 降级到 V1 以支持 action module
             config: { 
                 wide_screen_mode: true, 
                 update_multi: true
@@ -200,9 +202,7 @@ export class FeishuProvider {
                 title: { tag: "plain_text", content: title },
                 template: options.template || "blue"
             } : undefined,
-            body: {
-                elements: elements
-            }
+            elements: elements // V1: elements 在顶层
         };
         
         // 如果没有标题，移除 header
@@ -489,6 +489,8 @@ export class FeishuProvider {
      */
     async downloadImage(imageKey, messageId) {
         try {
+            this.safeLogger.info(`[Feishu] Starting download for imageKey: ${imageKey}, messageId: ${messageId}`);
+            
             // 创建媒体目录
             const homeDir = process.env.HOME || '/tmp';
             const mediaDir = path.join(homeDir, '.openclaw', 'media', 'feishu');
@@ -501,6 +503,7 @@ export class FeishuProvider {
             
             // 如果文件已存在，直接返回
             if (fs.existsSync(filePath)) {
+                this.safeLogger.info(`[Feishu] Image already exists: ${filePath}`);
                 return filePath;
             }
 
@@ -515,7 +518,14 @@ export class FeishuProvider {
                 },
             });
 
-            // 写入文件
+            // 优先处理 SDK 的 writeFile 方法
+            if (response && typeof response.writeFile === 'function') {
+                await response.writeFile(filePath);
+                this.safeLogger.info(`[Feishu] Downloaded image to ${filePath} (via writeFile)`);
+                return filePath;
+            }
+            
+            // 写入文件 (旧版 SDK 兼容)
             if (response && response.data) {
                 const writeStream = fs.createWriteStream(filePath);
                 await new Promise((resolve, reject) => {
@@ -523,17 +533,63 @@ export class FeishuProvider {
                     response.data.on('end', resolve);
                     response.data.on('error', reject);
                 });
-                this.safeLogger.info(`[Feishu] Downloaded image to ${filePath}`);
+                this.safeLogger.info(`[Feishu] Downloaded image to ${filePath} (via stream)`);
                 return filePath;
+            } else {
+                this.safeLogger.warn(`[Feishu] Empty response data for imageKey: ${imageKey}, keys: ${Object.keys(response || {}).join(',')}`);
             }
             
             return null;
         } catch (e) {
-            this.safeLogger.error(`[Feishu] Failed to download image: ${e.message}`);
+            this.safeLogger.error(`[Feishu] Failed to download image: ${e.message}`, e.response?.data);
             return null;
         }
     }
     
+    /**
+     * 递归从 Post 消息中提取并下载图片
+     * @returns {Promise<string[]>} 下载后的本地文件路径数组
+     */
+    async downloadPostImages(contentJson, messageId) {
+        const paths = [];
+        try {
+            // 兼容 content 已经是对象的情况
+            const content = typeof contentJson === 'string' ? JSON.parse(contentJson) : contentJson;
+            
+            // 递归查找 img 标签
+            const findImages = (obj) => {
+                if (!obj) return;
+                if (Array.isArray(obj)) {
+                    obj.forEach(findImages);
+                } else if (typeof obj === 'object') {
+                    if (obj.tag === 'img' && obj.image_key) {
+                        paths.push(obj.image_key);
+                    } else {
+                        Object.values(obj).forEach(findImages);
+                    }
+                }
+            };
+            
+            findImages(content);
+            
+            // 逐个下载
+            const localPaths = [];
+            for (const imageKey of paths) {
+                try {
+                    const localPath = await this.downloadImage(imageKey, messageId);
+                    if (localPath) localPaths.push(localPath);
+                } catch (err) {
+                    this.safeLogger.error(`[Feishu] Failed to download post image ${imageKey}: ${err.message}`);
+                }
+            }
+            
+            return localPaths;
+        } catch (e) {
+            this.safeLogger.error(`[Feishu] Failed to extract images from post: ${e.message}`);
+            return [];
+        }
+    }
+
     async start() {
         const core = getCoreRuntime();
         this.wsClient = new lark.WSClient({ 
@@ -557,6 +613,11 @@ export class FeishuProvider {
                 } else if (message.message_type === 'post') {
                     // 处理富文本消息
                     contentText = this.parsePostContent(message.content);
+                    // NEW: 下载富文本中的图片
+                    const postImages = await this.downloadPostImages(message.content, message.message_id);
+                    if (postImages.length > 0) {
+                        mediaPaths.push(...postImages);
+                    }
                 } else if (message.message_type === 'image') {
                     // 处理图片消息：下载图片并作为附件传递
                     try {
